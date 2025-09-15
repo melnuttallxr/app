@@ -1,0 +1,108 @@
+workflows:
+  unity-ios-workflow:
+    name: Unity iOS Workflow
+    instance_type: mac_mini_m2
+    max_build_duration: 120
+    environment:
+      groups:
+        - app_store_credentials        # APP_STORE_CONNECT_PRIVATE_KEY, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_ISSUER_ID
+        - unity_credentials            # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
+      vars:
+        BUILD_SCRIPT: BuildIos
+        UNITY_IOS_DIR: ios
+        XCODE_PROJECT: "Unity-iPhone.xcodeproj"
+        XCODE_SCHEME: "Unity-iPhone"
+        BUNDLE_ID: "premier.sport.blast"
+        APP_STORE_APPLE_ID: 6752545993
+      xcode: "16.4"
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: automatic.call.recorder.ringo
+    triggering:
+      events:
+        - push
+        - tag
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
+    scripts:
+      - name: Activate Unity License
+        script: |
+          $UNITY_HOME/Contents/MacOS/Unity -batchmode -quit -logFile \
+            -serial ${UNITY_SERIAL?} \
+            -username ${UNITY_EMAIL?} \
+            -password ${UNITY_PASSWORD?}
+
+      - name: Generate the Xcode project from Unity
+        script: |
+          $UNITY_HOME/Contents/MacOS/Unity -batchmode \
+            -quit \
+            -logFile \
+            -projectPath . \
+            -executeMethod BuildScript.$BUILD_SCRIPT \
+            -nographics
+
+      - name: Install CocoaPods dependencies (if Podfile exists)
+        script: |
+          if [ -f "$UNITY_IOS_DIR/Podfile" ]; then
+            (cd "$UNITY_IOS_DIR" && pod install)
+          else
+            echo "No Podfile found in $UNITY_IOS_DIR, skipping CocoaPods."
+          fi
+
+      - name: Set up provisioning profiles settings on Xcode project
+        script: |
+          (cd "$UNITY_IOS_DIR" && xcode-project use-profiles)
+
+      - name: Increment build number (from latest TestFlight)
+        script: |
+          BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
+          (cd "$UNITY_IOS_DIR" && agvtool new-version -all "$BUILD_NUMBER")
+
+      - name: Create archive (IPA)
+        script: |
+          cd "$UNITY_IOS_DIR"
+          if [ -d "Unity-iPhone.xcworkspace" ]; then
+            echo "Building via workspace…"
+            xcode-project build-ipa \
+              --workspace "Unity-iPhone.xcworkspace" \
+              --scheme "$XCODE_SCHEME"
+          else
+            echo "Building via project…"
+            xcode-project build-ipa \
+              --project "$XCODE_PROJECT" \
+              --scheme "$XCODE_SCHEME"
+          fi
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+
+    publishing:
+      scripts:
+        - name: Deactivate Unity License
+          script: | 
+            /Applications/Unity\ Hub.app/Contents/Frameworks/UnityLicensingClient_V1.app/Contents/MacOS/Unity.Licensing.Client \
+            --return-ulf \
+            --username ${UNITY_EMAIL?} \
+            --password ${UNITY_PASSWORD?}
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
+          - External QA
+        submit_to_app_store: false
+      email:
+        recipients:
+          - melnuttallxr@icloud.com
+        notify:
+          success: true
+          failure: false
