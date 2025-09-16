@@ -46,6 +46,8 @@ jobs:
           # unityVersion: auto  # при необходимости зафиксируй версию
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:
