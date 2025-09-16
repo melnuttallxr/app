@@ -20,6 +20,25 @@ jobs:
           path: Library
           key: Library-${{ runner.os }}-iOS
 
+      - name: Assert UNITY_LICENSE is present
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "${UNITY_LICENSE}" ]; then
+          echo "UNITY_LICENSE is EMPTY (secret не проброшен в джоб)"; exit 1
+          fi
+          echo "UNITY_LICENSE length: $(printf %s "$UNITY_LICENSE" | wc -c)"
+
+      - name: Normalize UNITY_LICENSE newlines
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          # удаляем \r и возвращаем переменную обратно в окружение
+          clean=$(printf "%s" "$UNITY_LICENSE" | tr -d '\r')
+          echo "UNITY_LICENSE<<EOF" >> $GITHUB_ENV
+          echo "$clean" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+    
       - name: Build (Unity → iOS)
         uses: game-ci/unity-builder@v4
         with:
