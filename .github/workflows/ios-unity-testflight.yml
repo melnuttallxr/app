@@ -40,7 +40,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_ENV"
 
-      # ⬇️ Новое: определяем точную версию Unity и добавляем f1, если нет суффикса
       - name: Detect Unity version from ProjectVersion.txt
         run: |
           set -euo pipefail
@@ -65,7 +64,7 @@ jobs:
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL:   ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD:${{ secrets.UNITY_PASSWORD }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -99,7 +98,6 @@ jobs:
           cd build/iOS
           agvtool new-version -all $GITHUB_RUN_NUMBER || true
 
-      # Фикс №1: авто-поиск проекта и схемы
       - name: Archive (manual signing)
         env:
           TEAM_ID: ${{ secrets.TEAM_ID }}
