@@ -102,16 +102,10 @@ jobs:
             PROJ=(-project "$PROJ_PATH")
           fi
 
-          # 2) Определяем первую доступную scheme автоматически
+          # 2) Определяем первую доступную scheme (без heredoc, чтобы не ловить IndentationError)
           SCHEME=$(
             xcodebuild -list -json "${PROJ[@]}" \
-            | /usr/bin/python3 - <<'PY'
-            import sys, json
-            j=json.load(sys.stdin)
-            p=j.get("workspace") or j.get("project") or {}
-            s=(p.get("schemes") or [])
-            print(s[0] if s else "")
-            PY
+            | /usr/bin/python3 -c 'import sys,json;j=json.load(sys.stdin);p=j.get("workspace") or j.get("project") or {};s=p.get("schemes") or [];print(s[0] if s else "")'
           )
           if [ -z "$SCHEME" ]; then
             echo "❌ Не удалось определить scheme"; exit 66
