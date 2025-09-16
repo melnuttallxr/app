@@ -25,7 +25,7 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         run: |
           if [ -z "${UNITY_LICENSE}" ]; then
-          echo "UNITY_LICENSE is EMPTY (secret не проброшен в джоб)"; exit 1
+            echo "UNITY_LICENSE is EMPTY (secret не проброшен в джоб)"; exit 1
           fi
           echo "UNITY_LICENSE length: $(printf %s "$UNITY_LICENSE" | wc -c)"
 
@@ -38,7 +38,7 @@ jobs:
           echo "UNITY_LICENSE<<EOF" >> $GITHUB_ENV
           echo "$clean" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-    
+
       - name: Build (Unity → iOS)
         uses: game-ci/unity-builder@v4
         with:
@@ -87,13 +87,40 @@ jobs:
         run: |
           set -euo pipefail
           cd build/iOS
-          SCHEME="Unity-iPhone"
-          if [ -d "Unity-iPhone.xcworkspace" ]; then
-            PROJ="-workspace Unity-iPhone.xcworkspace"
+
+          # 1) Ищем .xcworkspace или .xcodeproj в первых двух уровнях
+          PROJ_PATH=$(find . -maxdepth 2 -name "*.xcworkspace" -print -quit)
+          if [ -n "$PROJ_PATH" ]; then
+            PROJ=(-workspace "$PROJ_PATH")
           else
-            PROJ="-project Unity-iPhone.xcodeproj"
+            PROJ_PATH=$(find . -maxdepth 2 -name "*.xcodeproj" -print -quit)
+            if [ -z "$PROJ_PATH" ]; then
+              echo "❌ Ни .xcworkspace, ни .xcodeproj не найдено в $(pwd). Содержимое:"
+              ls -la
+              exit 66
+            fi
+            PROJ=(-project "$PROJ_PATH")
           fi
-          xcodebuild $PROJ \
+
+          # 2) Определяем первую доступную scheme автоматически
+          SCHEME=$(
+            xcodebuild -list -json "${PROJ[@]}" \
+            | /usr/bin/python3 - <<'PY'
+            import sys, json
+            j=json.load(sys.stdin)
+            p=j.get("workspace") or j.get("project") or {}
+            s=(p.get("schemes") or [])
+            print(s[0] if s else "")
+            PY
+          )
+          if [ -z "$SCHEME" ]; then
+            echo "❌ Не удалось определить scheme"; exit 66
+          fi
+
+          echo "✅ Using project: $PROJ_PATH"
+          echo "✅ Using scheme : $SCHEME"
+
+          xcodebuild "${PROJ[@]}" \
             -scheme "$SCHEME" \
             -configuration Release \
             -archivePath out.xcarchive \
