@@ -56,6 +56,37 @@ jobs:
           echo "UNITY_VERSION=$ver" >> $GITHUB_ENV
           echo "✅ Using Unity version: $ver"
 
+      - name: Install Unity Hub (cask)
+        run: brew install --cask unity-hub
+
+      - name: Preinstall Unity + iOS via Hub (with changeset)
+        run: |
+          set -euo pipefail
+          if [ ! -f ProjectSettings/ProjectVersion.txt ]; then
+            echo "❌ ProjectSettings/ProjectVersion.txt not found"; exit 1
+          fi
+
+          # Версия из ProjectVersion.txt (добавим f1, если нет суффикса)
+          VER=$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt | tr -d '\r' | xargs)
+          if ! echo "$VER" | grep -Eq '[abfp][0-9]+$'; then VER="${VER}f1"; fi
+
+          # Changeset со 2-й строки (в скобках). Если вдруг нет — идем без него.
+          CHG=$(awk -F '[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt | tr -d '\r' | xargs || true)
+          if [ -n "${CHG:-}" ]; then
+            CHG_FLAG=(--changeset "$CHG")
+          else
+            echo "⚠️ Changeset не найден в ProjectVersion.txt — ставим без --changeset"
+            CHG_FLAG=()
+          fi
+
+          HUB="/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
+          # Ставим редактор + модуль iOS для arm64. yes Y — авто-подтверждение.
+          yes Y | "$HUB" -- --headless install --version "$VER" "${CHG_FLAG[@]}" -a arm64 --module ios
+
+          echo "UNITY_VERSION=$VER" >> $GITHUB_ENV
+          echo "✅ Preinstalled Unity $VER $( [ -n "${CHG:-}" ] && echo "($CHG)" ) with iOS module"
+          
+
       - name: Build (Unity → iOS)
         uses: game-ci/unity-builder@v4
         with:
