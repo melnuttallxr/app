@@ -96,13 +96,14 @@ jobs:
         run: |
           set -euo pipefail
           cd build/iOS
+
           PROJ_PATH=$(find . -maxdepth 2 -name "*.xcworkspace" -print -quit)
           if [ -n "$PROJ_PATH" ]; then
             PROJ=(-workspace "$PROJ_PATH")
           else
             PROJ_PATH=$(find . -maxdepth 2 -name "*.xcodeproj" -print -quit)
             if [ -z "$PROJ_PATH" ]; then
-              echo "❌ Ни .xcworkspace, ни .xcodeproj не найдено в $(pwd). Содержимое:"; ls -la; exit 66
+              echo "❌ Ни .xcworkspace, ни .xcodeproj не найдено в $(pwd)."; ls -la; exit 66
             fi
             PROJ=(-project "$PROJ_PATH")
           fi
@@ -129,21 +130,36 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             clean archive | xcpretty
 
-      - name: Create ExportOptions.plist (Xcode 16+)
+      - name: Sanity check archive (detect Generic Archive)
+        run: |
+          set -euo pipefail
+          cd build/iOS
+          /usr/bin/plutil -p out.xcarchive/Info.plist || true
+          # быстрый детектор App Archive
+          if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
+            echo "⚠️ Похоже, это Generic Archive (нет ApplicationProperties)."
+            echo "Попробуем убрать DocC-пакеты, если они попали рядом с .app…"
+            find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
+          fi
+          # после чистки ещё раз проверим
+          if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
+            echo "❌ Архив по-прежнему Generic. Частая причина — лишние продукты в архиве (lib/framework/.docarchive) или Skip Install = NO у не-app таргета. Исправь в проекте и перезапусти."
+            exit 70
+          fi
+
+      - name: Create ExportOptions.plist (App Store)
         env:
-          TEAM_ID: ${{ secrets.TEAM_ID }}
           PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
         run: |
           set -euo pipefail
           cd build/iOS
           /usr/bin/python3 - <<'PY'
-          import os, plistlib, sys
+          import os, plistlib
           plist = {
-            # В Xcode 16+ используем app-store-connect (app-store — deprecated)
-            "method": "app-store-connect",
+            "method": "app-store",
             "destination": "export",
             "signingStyle": "manual",
-            "teamID": os.environ["TEAM_ID"],
+            # teamID намеренно не задаём — во многих случаях не требуется
             "provisioningProfiles": { os.environ["BUNDLE_ID"]: os.environ["PROFILE_NAME"] },
             "signingCertificate": "Apple Distribution",
             "stripSwiftSymbols": True,
