@@ -65,7 +65,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: xcode-ios
-          path: build/I​OS
+          path: build/iOS   # <-- фикс: ровно 'build/iOS'
+
+      - name: Inspect downloaded artifact
+        run: |
+          set -euxo pipefail
+          pwd
+          ls -la
+          ls -laR build || true
+          test -d build/iOS || { echo "❌ build/iOS не найден. Проверь upload шага."; exit 66; }
 
       - name: Xcode version
         run: xcodebuild -version
