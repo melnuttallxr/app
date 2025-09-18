@@ -65,7 +65,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: xcode-ios
-          path: build/iOS   # <-- фикс: ровно 'build/iOS'
+          path: build/iOS   # важно: строго этот путь
 
       - name: Inspect downloaded artifact
         run: |
@@ -131,10 +131,10 @@ jobs:
           cd build/iOS
           agvtool new-version -all $GITHUB_RUN_NUMBER || true
 
-      - name: Archive (manual signing, verbose log)
+      # === ВАЖНО: архив без PROVISIONING_PROFILE_SPECIFIER, включаем Automatic + allowProvisioningUpdates ===
+      - name: Archive (automatic signing for build, manual on export)
         env:
           TEAM_ID: ${{ secrets.TEAM_ID }}
-          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}   # имя из Dev Portal
         run: |
           set -euo pipefail
           cd build/iOS
@@ -153,7 +153,6 @@ jobs:
           SCHEME="Unity-iPhone"
           echo "✅ Using project: $PROJ_PATH"
           echo "✅ Using scheme : $SCHEME"
-          echo "✅ Using profile: ${PROFILE_NAME}"
 
           echo "🧰 Show build settings (top 200 lines)"
           xcodebuild "${PROJ[@]}" -scheme "$SCHEME" -configuration Release -showBuildSettings | head -200 || true
@@ -164,13 +163,12 @@ jobs:
             -configuration Release \
             -archivePath out.xcarchive \
             -destination 'generic/platform=iOS' \
-            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_STYLE=Automatic \
             DEVELOPMENT_TEAM="${TEAM_ID}" \
             PRODUCT_BUNDLE_IDENTIFIER="${BUNDLE_ID}" \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
             ONLY_ACTIVE_ARCH=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+            -allowProvisioningUpdates \
             | tee xcodebuild-archive.log
           STATUS=${PIPESTATUS[0]}
           set -e
@@ -194,7 +192,7 @@ jobs:
             find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
           fi
           if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
-            echo "❌ Архив по-прежнему Generic. Частая причина — Skip Install = NO у не-app таргета или лишние продукты."; exit 70
+            echo "❌ Архив по-прежнему Generic. Частая причина — Skip Install = YES у не-app таргетов и отсутствие лишних продуктов."; exit 70
           fi
 
       - name: Create ExportOptions.plist (App Store)
