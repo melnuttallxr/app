@@ -33,15 +33,7 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      - name: Assert UNITY_LICENSE is present
-        if: steps.cache-ios.outputs.cache-hit != 'true'
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-        run: |
-          if [ -z "${UNITY_LICENSE}" ]; then
-            echo "UNITY_LICENSE is EMPTY (secret не проброшен в джоб)"; exit 1
-          fi
-          echo "UNITY_LICENSE length: $(printf %s "$UNITY_LICENSE" | wc -c)"
+      
 
       - name: Normalize UNITY_LICENSE newlines
         if: steps.cache-ios.outputs.cache-hit != 'true'
@@ -142,19 +134,11 @@ jobs:
         run: |
           set -euo pipefail
           cd build/iOS
-          PROJ_PATH=$(find . -maxdepth 2 -name "*.xcworkspace" -print -quit)
-          if [ -n "$PROJ_PATH" ]; then
-            PROJ=(-workspace "$PROJ_PATH")
-          else
-            PROJ_PATH=$(find . -maxdepth 2 -name "*.xcodeproj" -print -quit)
-            if [ -z "$PROJ_PATH" ]; then
-              echo "❌ Ни .xcworkspace, ни .xcodeproj не найдено в $(pwd)."; ls -la; exit 66
-            fi
-            PROJ=(-project "$PROJ_PATH")
-          fi
+          
 
           # 🔒 Жёстко используем app-схему Unity-iPhone
           SCHEME="Unity-iPhone"
+          PROJ_PATH="./iOS/Unity-iPhone.xcodeproj"
 
           echo "✅ Using project: $PROJ_PATH"
           echo "✅ Using scheme : $SCHEME"
