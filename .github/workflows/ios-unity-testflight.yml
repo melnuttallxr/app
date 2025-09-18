@@ -65,7 +65,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: xcode-ios
-          path: build/iOS
+          path: build/I​OS
 
       - name: Xcode version
         run: xcodebuild -version
@@ -81,48 +81,52 @@ jobs:
 
       - name: Install provisioning profile
         run: |
+          set -euo pipefail
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           PROFILE_PATH="$HOME/Library/MobileDevice/Provisioning Profiles/appstore.mobileprovision"
           echo "${{ secrets.IOS_MOBILEPROVISION_BASE64 }}" | base64 --decode > "$PROFILE_PATH"
+          if [ ! -s "$PROFILE_PATH" ]; then
+            echo "❌ Provisioning profile was not written or is empty at: $PROFILE_PATH"
+            ls -lah "$HOME/Library/MobileDevice/Provisioning Profiles" || true
+            exit 2
+          fi
+          echo "✅ Wrote provisioning profile to: $PROFILE_PATH"
 
-      # 🔎 Новое: быстрая диагностика серта/профиля/BundleID
       - name: Diagnose signing setup
-        env:
-          PROFILE_PATH: $HOME/Library/MobileDevice/Provisioning Profiles/appstore.mobileprovision
         run: |
           set -euo pipefail
+          PROFILE_PATH="$HOME/Library/MobileDevice/Provisioning Profiles/appstore.mobileprovision"
+
+          echo "— Env Bundle ID: ${BUNDLE_ID}"
           echo "🔐 Installed signing identities:"
           security find-identity -v -p codesigning || true
 
+          echo "📂 Listing profiles dir:"
+          ls -lah "$HOME/Library/MobileDevice/Provisioning Profiles" || true
+
           if [ ! -f "$PROFILE_PATH" ]; then
-            echo "❌ Provisioning profile not found at $PROFILE_PATH"; exit 2
+            echo "❌ Provisioning profile not found at $PROFILE_PATH"
+            exit 2
           fi
 
           echo "📄 Dumping provisioning profile to profile.plist"
           security cms -D -i "$PROFILE_PATH" > profile.plist
 
-          echo "— Profile Name:"
-          /usr/libexec/PlistBuddy -c 'Print :Name' profile.plist || true
-          echo "— UUID:"
-          /usr/libexec/PlistBuddy -c 'Print :UUID' profile.plist || true
-          echo "— TeamIdentifier:"
-          /usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' profile.plist || true
-          echo "— application-identifier:"
-          /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' profile.plist || true
-          echo "— team-identifier entitlement:"
-          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' profile.plist || true
-          echo "— Env Bundle ID: ${BUNDLE_ID}"
+          echo "— Profile Name:"; /usr/libexec/PlistBuddy -c 'Print :Name' profile.plist || true
+          echo "— UUID:"; /usr/libexec/PlistBuddy -c 'Print :UUID' profile.plist || true
+          echo "— TeamIdentifier:"; /usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' profile.plist || true
+          echo "— application-identifier:"; /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' profile.plist || true
+          echo "— team-identifier entitlement:"; /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.team-identifier' profile.plist || true
 
       - name: Bump build number (CFBundleVersion)
         run: |
           cd build/iOS
           agvtool new-version -all $GITHUB_RUN_NUMBER || true
 
-      # 🔧 Заменено: «громкий» архив без xcpretty + сохранение полного лога
       - name: Archive (manual signing, verbose log)
         env:
           TEAM_ID: ${{ secrets.TEAM_ID }}
-          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}   # ← имя из Dev Portal
+          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}   # имя из Dev Portal
         run: |
           set -euo pipefail
           cd build/iOS
@@ -165,7 +169,6 @@ jobs:
           echo "xcodebuild exit code: $STATUS"
           test $STATUS -eq 0
 
-      # 🗂️ Всегда поднимаем сырой лог — удобно искать точную ошибку
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -182,7 +185,7 @@ jobs:
             echo "Попробуем убрать DocC-пакеты рядом с .app…"
             find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
           fi
-          if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/devnull 2>&1; then
+          if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
             echo "❌ Архив по-прежнему Generic. Частая причина — Skip Install = NO у не-app таргета или лишние продукты."; exit 70
           fi
 
