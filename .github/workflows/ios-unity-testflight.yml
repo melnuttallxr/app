@@ -7,6 +7,8 @@ on:
 
 env:
   BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+  # Опционально: зафиксируй схему приложения вручную (например, Unity-iPhone)
+  XCODE_SCHEME: Unity-iPhone
 
 jobs:
   unity-export-ios:
@@ -87,34 +89,51 @@ jobs:
 
       - name: Bump build number (CFBundleVersion)
         run: |
+          set -euo pipefail
           cd build/iOS
           agvtool new-version -all $GITHUB_RUN_NUMBER || true
 
-      - name: Archive (manual signing)
+      - name: Archive (manual signing, smart scheme detection)
         env:
           TEAM_ID: ${{ secrets.TEAM_ID }}
+          XCODE_SCHEME: ${{ env.XCODE_SCHEME }}
         run: |
           set -euo pipefail
           cd build/iOS
 
-          PROJ_PATH=$(find . -maxdepth 2 -name "*.xcworkspace" -print -quit)
-          if [ -n "$PROJ_PATH" ]; then
+          # --- workspace/project detection (предпочитаем Unity-iPhone.xcworkspace) ---
+          if [ -f "Unity-iPhone.xcworkspace" ]; then
+            PROJ_PATH="Unity-iPhone.xcworkspace"
             PROJ=(-workspace "$PROJ_PATH")
           else
-            PROJ_PATH=$(find . -maxdepth 2 -name "*.xcodeproj" -print -quit)
-            if [ -z "$PROJ_PATH" ]; then
+            if compgen -G "*.xcworkspace" >/dev/null; then
+              PROJ_PATH="$(ls -1 *.xcworkspace | head -n1)"
+              PROJ=(-workspace "$PROJ_PATH")
+            elif compgen -G "*.xcodeproj" >/dev/null; then
+              PROJ_PATH="$(ls -1 *.xcodeproj | head -n1)"
+              PROJ=(-project "$PROJ_PATH")
+            else
               echo "❌ Ни .xcworkspace, ни .xcodeproj не найдено в $(pwd)."; ls -la; exit 66
             fi
-            PROJ=(-project "$PROJ_PATH")
           fi
 
-          SCHEME=$(
-            xcodebuild -list -json "${PROJ[@]}" \
-            | /usr/bin/python3 -c 'import sys,json;j=json.load(sys.stdin);p=j.get("workspace") or j.get("project") or {};s=p.get("schemes") or [];print(s[0] if s else "")'
-          )
-          if [ -z "$SCHEME" ]; then
-            echo "❌ Не удалось определить scheme"; exit 66
+          # --- scheme detection: берём из env, иначе ищем схему с продуктом .app ---
+          if [ -n "${XCODE_SCHEME:-}" ]; then
+            SCHEME="$XCODE_SCHEME"
+          else
+            mapfile -t ALL_SCHEMES < <(xcodebuild -list -json "${PROJ[@]}" | /usr/bin/python3 -c 'import sys,json; j=json.load(sys.stdin); p=j.get("workspace") or j.get("project") or {}; print("\n".join(p.get("schemes") or []))')
+            SCHEME=""
+            for s in "${ALL_SCHEMES[@]}"; do
+              if xcodebuild "${PROJ[@]}" -scheme "$s" -showBuildSettings 2>/dev/null \
+                 | grep -qE 'WRAPPER_EXTENSION[[:space:]]*=[[:space:]]*app|PRODUCT_BUNDLE_PACKAGE_TYPE[[:space:]]*=[[:space:]]*APPL'; then
+                SCHEME="$s"; break
+              fi
+            done
+            if [ -z "$SCHEME" ]; then
+              echo "❌ Не нашли app-scheme среди: ${ALL_SCHEMES[*]}"; exit 66
+            fi
           fi
+
           echo "✅ Using project: $PROJ_PATH"
           echo "✅ Using scheme : $SCHEME"
 
@@ -134,16 +153,24 @@ jobs:
         run: |
           set -euo pipefail
           cd build/iOS
+
           /usr/bin/plutil -p out.xcarchive/Info.plist || true
+
           # быстрый детектор App Archive
           if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
             echo "⚠️ Похоже, это Generic Archive (нет ApplicationProperties)."
-            echo "Попробуем убрать DocC-пакеты, если они попали рядом с .app…"
-            find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
+            # Чистку DocC делаем только если есть каталог Applications
+            if [ -d out.xcarchive/Products/Applications ]; then
+              echo "Попробуем убрать DocC-пакеты рядом с .app…"
+              find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
+            else
+              echo "Нет out.xcarchive/Products/Applications — пропускаю DocC-чистку."
+            fi
           fi
-          # после чистки ещё раз проверим
+
+          # повторная проверка
           if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
-            echo "❌ Архив по-прежнему Generic. Частая причина — лишние продукты в архиве (lib/framework/.docarchive) или Skip Install = NO у не-app таргета. Исправь в проекте и перезапусти."
+            echo "❌ Архив по-прежнему Generic. Частая причина — выбран не app-scheme или Skip Install неверно настроен."
             exit 70
           fi
 
@@ -153,21 +180,7 @@ jobs:
         run: |
           set -euo pipefail
           cd build/iOS
-          /usr/bin/python3 - <<'PY'
-          import os, plistlib
-          plist = {
-            "method": "app-store",
-            "destination": "export",
-            "signingStyle": "manual",
-            # teamID намеренно не задаём — во многих случаях не требуется
-            "provisioningProfiles": { os.environ["BUNDLE_ID"]: os.environ["PROFILE_NAME"] },
-            "signingCertificate": "Apple Distribution",
-            "stripSwiftSymbols": True,
-            "uploadSymbols": True
-          }
-          with open("ExportOptions.plist","wb") as f:
-              plistlib.dump(plist, f)
-          PY
+          /usr/bin/python3 -c 'import os,plistlib; plist={"method":"app-store","destination":"export","signingStyle":"manual","provisioningProfiles":{os.environ["BUNDLE_ID"]:os.environ["PROFILE_NAME"]},"signingCertificate":"Apple Distribution","stripSwiftSymbols":True,"uploadSymbols":True}; plistlib.dump(plist,open("ExportOptions.plist","wb"))'
           /usr/bin/plutil -lint ExportOptions.plist
           /usr/bin/plutil -p ExportOptions.plist
 
@@ -203,6 +216,7 @@ jobs:
           APPLE_APP_ID: ${{ secrets.APPLE_APP_ID }}
           TESTFLIGHT_GROUPS: ${{ secrets.TESTFLIGHT_GROUPS }}
         run: |
+          set -euo pipefail
           IPA=$(ls build/iOS/out/*.ipa | head -n1)
           if [ -z "${TESTFLIGHT_GROUPS}" ]; then
             fastlane pilot upload --api_key_path asc_api_key.json --apple_id "${APPLE_APP_ID}" --ipa "$IPA"
