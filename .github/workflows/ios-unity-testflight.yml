@@ -131,8 +131,7 @@ jobs:
           cd build/iOS
           agvtool new-version -all $GITHUB_RUN_NUMBER || true
 
-      # === ВАЖНО: архив без PROVISIONING_PROFILE_SPECIFIER, включаем Automatic + allowProvisioningUpdates ===
-      - name: Archive (automatic signing for build, manual on export)
+      - name: Archive (unsigned build → sign on export)
         env:
           TEAM_ID: ${{ secrets.TEAM_ID }}
         run: |
@@ -154,33 +153,26 @@ jobs:
           echo "✅ Using project: $PROJ_PATH"
           echo "✅ Using scheme : $SCHEME"
 
-          echo "🧰 Show build settings (top 200 lines)"
-          xcodebuild "${PROJ[@]}" -scheme "$SCHEME" -configuration Release -showBuildSettings | head -200 || true
-
+          # Важное: полностью отключаем подпись на этапе архива.
+          # Так Xcode не будет требовать аккаунт/профиль.
           set +e
           xcodebuild "${PROJ[@]}" \
             -scheme "$SCHEME" \
             -configuration Release \
             -archivePath out.xcarchive \
             -destination 'generic/platform=iOS' \
-            CODE_SIGN_STYLE=Automatic \
-            DEVELOPMENT_TEAM="${TEAM_ID}" \
             PRODUCT_BUNDLE_IDENTIFIER="${BUNDLE_ID}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             ONLY_ACTIVE_ARCH=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            -allowProvisioningUpdates \
             | tee xcodebuild-archive.log
           STATUS=${PIPESTATUS[0]}
           set -e
           echo "xcodebuild exit code: $STATUS"
           test $STATUS -eq 0
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xcodebuild-archive-log
-          path: build/iOS/xcodebuild-archive.log
-
       - name: Sanity check archive (detect Generic Archive)
         run: |
           set -euo pipefail
