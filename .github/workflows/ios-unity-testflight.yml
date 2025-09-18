@@ -20,23 +20,18 @@ jobs:
           path: Library
           key: Library-${{ runner.os }}-iOS
 
-      # 🔁 Пытаемся восстановить экспортированный Xcode-проект из кеша
-      - name: Restore cached Xcode export (build/iOS)
-        id: cache-ios
-        uses: actions/cache/restore@v4
-        with:
-          path: build/iOS
-          key: ios-xcodeproj-${{ runner.os }}-${{ hashFiles('Assets/**','ProjectSettings/**','Packages/manifest.json','Packages/packages-lock.json') }}
-          restore-keys: |
-            ios-xcodeproj-${{ runner.os }}-
-
       - name: Xcode version
         run: xcodebuild -version
 
-      
-
+      - name: Assert UNITY_LICENSE is present
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "${UNITY_LICENSE}" ]; then
+            echo "UNITY_LICENSE is EMPTY (secret не проброшен в джоб)"; exit 1
+          fi
+          echo "UNITY_LICENSE length: $(printf %s "$UNITY_LICENSE" | wc -c)"
       - name: Normalize UNITY_LICENSE newlines
-        if: steps.cache-ios.outputs.cache-hit != 'true'
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         run: |
@@ -46,9 +41,7 @@ jobs:
             echo "$clean"
             echo "EOF"
           } >> "$GITHUB_ENV"
-
       - name: Build (Unity → iOS)
-        if: steps.cache-ios.outputs.cache-hit != 'true'
         uses: game-ci/unity-builder@v4
         with:
           targetPlatform: iOS
@@ -57,16 +50,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-      - name: Save cache (Xcode export)
-        if: steps.cache-ios.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: build/iOS
-          key: ios-xcodeproj-${{ runner.os }}-${{ hashFiles('Assets/**','ProjectSettings/**','Packages/manifest.json','Packages/packages-lock.json') }}
-
-      # (опционально) артефакт как резервный канал
       - uses: actions/upload-artifact@v4
-        if: steps.cache-ios.outputs.cache-hit != 'true'
         with:
           name: xcode-ios
           path: build/iOS
@@ -76,36 +60,13 @@ jobs:
     needs: [unity-export-ios]
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4  # нужен для hashFiles
-
-      - name: Restore cached Xcode export (build/iOS)
-        id: cache-ios
-        uses: actions/cache/restore@v4
-        with:
-          path: build/iOS
-          key: ios-xcodeproj-${{ runner.os }}-${{ hashFiles('Assets/**','ProjectSettings/**','Packages/manifest.json','Packages/packages-lock.json') }}
-          restore-keys: |
-            ios-xcodeproj-${{ runner.os }}-
-
-      # Фолбэк: если кеш не найден — забираем артефакт из предыдущего джоба
       - uses: actions/download-artifact@v4
-        if: steps.cache-ios.outputs.cache-hit != 'true'
         with:
           name: xcode-ios
           path: build/iOS
 
       - name: Xcode version
-        id: xver
-        run: echo "version=$(xcodebuild -version | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-
-      # ⚡️ Кешируем DerivedData, чтобы ускорить архив
-      - name: Restore Xcode DerivedData cache
-        uses: actions/cache/restore@v4
-        with:
-          path: derived
-          key: derived-${{ runner.os }}-${{ steps.xver.outputs.version }}-${{ hashFiles('build/iOS/**/*.xcodeproj/project.pbxproj') }}
-          restore-keys: |
-            derived-${{ runner.os }}-
+        run: xcodebuild -version
 
       - name: Install xcpretty
         run: sudo gem install xcpretty -N
@@ -121,35 +82,37 @@ jobs:
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           PROFILE_PATH="$HOME/Library/MobileDevice/Provisioning Profiles/appstore.mobileprovision"
           echo "${{ secrets.IOS_MOBILEPROVISION_BASE64 }}" | base64 --decode > "$PROFILE_PATH"
-
       - name: Bump build number (CFBundleVersion)
         run: |
           cd build/iOS
           agvtool new-version -all $GITHUB_RUN_NUMBER || true
-
       - name: Archive (manual signing)
         env:
           TEAM_ID: ${{ secrets.TEAM_ID }}
-          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}   # имя профиля ровно как в Apple Developer (Name)
+          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}   # ← имя профиля из Apple Developer (ровно как в ExportOptions)
         run: |
           set -euo pipefail
           cd build/iOS
-          
-
-          # 🔒 Жёстко используем app-схему Unity-iPhone
+          PROJ_PATH=$(find . -maxdepth 2 -name "*.xcworkspace" -print -quit)
+          if [ -n "$PROJ_PATH" ]; then
+            PROJ=(-workspace "$PROJ_PATH")
+          else
+            PROJ_PATH=$(find . -maxdepth 2 -name "*.xcodeproj" -print -quit)
+            if [ -z "$PROJ_PATH" ]; then
+              echo "❌ Ни .xcworkspace, ни .xcodeproj не найдено в $(pwd)."; ls -la; exit 66
+            fi
+            PROJ=(-project "$PROJ_PATH")
+          fi
+          # 🔒 Жёстко задаём схему Unity-iPhone
           SCHEME="Unity-iPhone"
-          PROJ_PATH="./iOS/Unity-iPhone.xcodeproj"
-
           echo "✅ Using project: $PROJ_PATH"
           echo "✅ Using scheme : $SCHEME"
           echo "✅ Using profile: ${PROFILE_NAME}"
-
           set -o pipefail
           xcodebuild "${PROJ[@]}" \
             -scheme "$SCHEME" \
             -configuration Release \
             -archivePath out.xcarchive \
-            -derivedDataPath ../derived \
             -destination 'generic/platform=iOS' \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="${TEAM_ID}" \
@@ -158,7 +121,6 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
             PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]="${PROFILE_NAME}" \
             clean archive | xcpretty
-
       - name: Sanity check archive (detect Generic Archive)
         run: |
           set -euo pipefail
@@ -167,20 +129,14 @@ jobs:
           # быстрый детектор App Archive
           if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
             echo "⚠️ Похоже, это Generic Archive (нет ApplicationProperties)."
-            # Чистим DocC только если каталог Applications существует
-            if [ -d out.xcarchive/Products/Applications ]; then
-              echo "Попробуем убрать DocC-пакеты рядом с .app…"
-              find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
-            else
-              echo "Нет out.xcarchive/Products/Applications — пропускаю DocC-чистку."
-            fi
+            echo "Попробуем убрать DocC-пакеты, если они попали рядом с .app…"
+            find out.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.docarchive" -print -exec rm -rf {} \; || true
           fi
-          # повторная проверка
+          # после чистки ещё раз проверим
           if ! /usr/bin/plutil -extract ApplicationProperties xml1 -o - out.xcarchive/Info.plist >/dev/null 2>&1; then
-            echo "❌ Архив по-прежнему Generic. Частая причина — выбран не app-scheme или Skip Install неверно настроен."
+            echo "❌ Архив по-прежнему Generic. Частая причина — лишние продукты в архиве (lib/framework/.docarchive) или Skip Install = NO у не-app таргета. Исправь в проекте и перезапусти."
             exit 70
           fi
-
       - name: Create ExportOptions.plist (App Store)
         env:
           PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
@@ -193,6 +149,7 @@ jobs:
             "method": "app-store",
             "destination": "export",
             "signingStyle": "manual",
+            # teamID намеренно не задаём — во многих случаях не требуется
             "provisioningProfiles": { os.environ["BUNDLE_ID"]: os.environ["PROFILE_NAME"] },
             "signingCertificate": "Apple Distribution",
             "stripSwiftSymbols": True,
@@ -203,7 +160,6 @@ jobs:
           PY
           /usr/bin/plutil -lint ExportOptions.plist
           /usr/bin/plutil -p ExportOptions.plist
-
       - name: Export IPA
         run: |
           set -euo pipefail
@@ -213,7 +169,6 @@ jobs:
             -exportPath out \
             -exportOptionsPlist ExportOptions.plist | xcpretty
           ls -lah out
-
       - name: Setup Ruby & fastlane
         uses: ruby/setup-ruby@v1
         with:
@@ -230,13 +185,11 @@ jobs:
             "issuer_id":"${{ secrets.ASC_ISSUER_ID }}",
             "key":"${{ secrets.ASC_API_KEY_P8 }}" }
           JSON
-
       - name: Upload IPA to TestFlight
         env:
           APPLE_APP_ID: ${{ secrets.APPLE_APP_ID }}
           TESTFLIGHT_GROUPS: ${{ secrets.TESTFLIGHT_GROUPS }}
         run: |
-          set -euo pipefail
           IPA=$(ls build/iOS/out/*.ipa | head -n1)
           if [ -z "${TESTFLIGHT_GROUPS}" ]; then
             fastlane pilot upload --api_key_path asc_api_key.json --apple_id "${APPLE_APP_ID}" --ipa "$IPA"
@@ -244,15 +197,7 @@ jobs:
             fastlane pilot upload --api_key_path asc_api_key.json --apple_id "${APPLE_APP_ID}" --ipa "$IPA" \
               --distribute_external true --groups "$TESTFLIGHT_GROUPS"
           fi
-
       - uses: actions/upload-artifact@v4
         with:
           name: ipa
           path: build/iOS/out/*.ipa
-
-      # ♻️ Сохраняем обновлённый DerivedData
-      - name: Save Xcode DerivedData cache
-        uses: actions/cache/save@v4
-        with:
-          path: derived
-          key: derived-${{ runner.os }}-${{ steps.xver.outputs.version }}-${{ hashFiles('build/iOS/**/*.xcodeproj/project.pbxproj') }}
