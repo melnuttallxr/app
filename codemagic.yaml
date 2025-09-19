@@ -14,6 +14,8 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
+        UNITY_VERSION: "6000.0.7f1"  
+        UNITY_HOME: "/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app"
       xcode: "16.4"
       cocoapods: default
       ios_signing:
