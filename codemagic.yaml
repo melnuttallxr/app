@@ -3,8 +3,8 @@ workflows:
     name: Unity iOS Workflow
     instance_type: mac_mini_m2
     max_build_duration: 120
+
     environment:
-      unity: "6000.0.7f1"
       groups:
         - app_store_credentials        # APP_STORE_CONNECT_PRIVATE_KEY, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_ISSUER_ID
         - unity_credentials            # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
@@ -15,42 +15,93 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
-        UNITY_VERSION: "6000.0.7f1"  
-        UNITY_HOME: "/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app"
       xcode: "16.4"
       cocoapods: default
       ios_signing:
         distribution_type: app_store
         bundle_identifier: premier.sport.blast
+
     triggering:
-      events:
-        - push
-        - tag
-        - pull_request
+      events: [ push, tag, pull_request ]
       branch_patterns:
         - pattern: main
           include: true
           source: true
+
     scripts:
+      - name: Read Unity version & changeset
+        script: |
+          set -euo pipefail
+
+          if [ -f "ProjectSettings/ProjectVersion.txt" ]; then
+            VER_LINE=$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)
+            REV_LINE=$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt)
+
+            # Fallback если второй строки нет
+            if [ -z "${REV_LINE:-}" ]; then
+              REV_LINE=""
+            fi
+
+            echo "Detected UNITY_VERSION=$VER_LINE"
+            echo "Detected UNITY_CHANGESET=$REV_LINE"
+
+            echo "UNITY_VERSION=${VER_LINE}" >> "$CM_ENV"
+            echo "UNITY_CHANGESET=${REV_LINE}" >> "$CM_ENV"
+            echo "UNITY_HOME=/Applications/Unity/Hub/Editor/${VER_LINE}/Unity.app" >> "$CM_ENV"
+          else
+            echo "❌ ProjectSettings/ProjectVersion.txt not found. Set UNITY_VERSION manually and ensure UNITY_HOME later."
+            exit 1
+          fi
+
+      - name: Install Unity via Hub if missing
+        script: |
+          set -euo pipefail
+
+          if [ ! -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
+            echo "Unity not found at $UNITY_HOME, installing via Unity Hub…"
+            brew install --cask unity-hub || true
+
+            HUB="/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
+            if [ ! -x "$HUB" ]; then
+              echo "❌ Unity Hub binary not found at $HUB"
+              exit 1
+            fi
+
+            # Установка редактора + iOS модуля
+            if [ -n "${UNITY_CHANGESET:-}" ]; then
+              "$HUB" -- --headless install --version "${UNITY_VERSION}" --changeset "${UNITY_CHANGESET}" --module ios
+            else
+              "$HUB" -- --headless install --version "${UNITY_VERSION}" --module ios
+            fi
+          else
+            echo "Unity already installed at $UNITY_HOME"
+          fi
+
+          echo "Listing Unity bin:"
+          ls -la "$UNITY_HOME/Contents/MacOS" || true
+          "$UNITY_HOME/Contents/MacOS/Unity" -version || true
+
       - name: Activate Unity License
         script: |
-          set -e
+          set -euo pipefail
           echo "UNITY_HOME=$UNITY_HOME"
           test -x "$UNITY_HOME/Contents/MacOS/Unity"
+
           "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
-            -serial "${UNITY_SERIAL?}" -username "${UNITY_EMAIL?}" -password "${UNITY_PASSWORD?}"
+            -serial "${UNITY_SERIAL?}" \
+            -username "${UNITY_EMAIL?}" \
+            -password "${UNITY_PASSWORD?}"
 
       - name: Generate the Xcode project from Unity
         script: |
-          $UNITY_HOME/Contents/MacOS/Unity -batchmode \
-            -quit \
-            -logFile \
+          set -euo pipefail
+          "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
             -projectPath . \
-            -executeMethod BuildScript.$BUILD_SCRIPT \
-            -nographics
+            -executeMethod "BuildScript.${BUILD_SCRIPT}"
 
       - name: Install CocoaPods dependencies (if Podfile exists)
         script: |
+          set -euo pipefail
           if [ -f "$UNITY_IOS_DIR/Podfile" ]; then
             (cd "$UNITY_IOS_DIR" && pod install)
           else
@@ -59,15 +110,18 @@ workflows:
 
       - name: Set up provisioning profiles settings on Xcode project
         script: |
+          set -euo pipefail
           (cd "$UNITY_IOS_DIR" && xcode-project use-profiles)
 
       - name: Increment build number (from latest TestFlight)
         script: |
+          set -euo pipefail
           BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
           (cd "$UNITY_IOS_DIR" && agvtool new-version -all "$BUILD_NUMBER")
 
       - name: Create archive (IPA)
         script: |
+          set -euo pipefail
           cd "$UNITY_IOS_DIR"
           if [ -d "Unity-iPhone.xcworkspace" ]; then
             echo "Building via workspace…"
@@ -89,11 +143,13 @@ workflows:
     publishing:
       scripts:
         - name: Deactivate Unity License
-          script: | 
-            /Applications/Unity\ Hub.app/Contents/Frameworks/UnityLicensingClient_V1.app/Contents/MacOS/Unity.Licensing.Client \
-            --return-ulf \
-            --username ${UNITY_EMAIL?} \
-            --password ${UNITY_PASSWORD?}
+          script: |
+            set -euo pipefail
+            if [ -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
+              "$UNITY_HOME/Contents/MacOS/Unity" -quit -batchmode -returnlicense -nographics || true
+            else
+              echo "Unity not found, skip returnlicense"
+            fi
       app_store_connect:
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
