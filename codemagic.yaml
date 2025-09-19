@@ -15,7 +15,7 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
-        UNITY_ARCH: arm64              # фикс интерактива при установке через Hub
+        UNITY_ARCH: arm64              # чтобы Hub не спрашивал архитектуру
       xcode: "16.4"
       cocoapods: default
       ios_signing:
@@ -53,7 +53,6 @@ workflows:
             brew install --cask unity-hub || true
             HUB="/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
             [ -x "$HUB" ] || { echo "❌ Unity Hub binary not found at $HUB"; exit 1; }
-            # Устанавливаем редактор + модули. На некоторых версиях mac-il2cpp обязателен для bee/il2cpp host backend.
             if [ -n "${UNITY_CHANGESET:-}" ]; then
               "$HUB" -- --headless install \
                 --version "${UNITY_VERSION}" \
@@ -78,18 +77,9 @@ workflows:
       - name: Ensure Python deps for IL2CPP deploy (packaging)
         script: |
           set -euo pipefail
-          # Многие IL2CPP deploy-скрипты тянут python3-модуль 'packaging'
           python3 -m pip install --user --upgrade pip || true
           python3 -m pip install --user packaging || true
-          python3 - <<'PY'
-import sys
-try:
-    import packaging
-    print("✅ python3 'packaging' is available:", packaging.__version__)
-except Exception as e:
-    print("⚠️ python3 'packaging' import failed:", e)
-    sys.exit(0)
-PY
+          python3 -c 'import importlib; print("✅ packaging found" if importlib.util.find_spec("packaging") else "⚠️ packaging NOT found")' || true
 
       - name: Activate Unity License
         script: |
@@ -117,7 +107,7 @@ PY
           if [ -d "$UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP" ]; then
             find "$UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP" -maxdepth 4 -type d -name "build" | head -n 5 || true
           else
-            echo "⚠️ $UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP not found yet (Unity will generate during Xcode build)"
+            echo "ℹ️ $UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP not found yet (Unity will generate during Xcode build)"
           fi
 
       - name: Install CocoaPods dependencies (if Podfile exists)
@@ -151,7 +141,6 @@ PY
               --scheme "$XCODE_SCHEME"
           else
             echo "Building via project…"
-            # Для более подробных логов скриптов Unity можно добавить: OTHER_SWIFT_FLAGS='-Xfrontend -debug-time-function-bodies'
             xcode-project build-ipa \
               --project "$XCODE_PROJECT" \
               --scheme "$XCODE_SCHEME"
