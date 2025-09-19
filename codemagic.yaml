@@ -18,7 +18,7 @@ workflows:
       cocoapods: default
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: automatic.call.recorder.ringo
+        bundle_identifier: premier.sport.blast
     triggering:
       events:
         - push
