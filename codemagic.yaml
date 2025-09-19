@@ -15,6 +15,7 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
+        UNITY_ARCH: arm64              # чтобы Hub не спрашивал архитектуру
       xcode: "16.4"
       cocoapods: default
       ios_signing:
@@ -32,52 +33,44 @@ workflows:
       - name: Read Unity version & changeset
         script: |
           set -euo pipefail
-
-          if [ -f "ProjectSettings/ProjectVersion.txt" ]; then
-            VER_LINE=$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)
-            REV_LINE=$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt)
-
-            # Fallback если второй строки нет
-            if [ -z "${REV_LINE:-}" ]; then
-              REV_LINE=""
-            fi
-
-            echo "Detected UNITY_VERSION=$VER_LINE"
-            echo "Detected UNITY_CHANGESET=$REV_LINE"
-
-            echo "UNITY_VERSION=${VER_LINE}" >> "$CM_ENV"
-            echo "UNITY_CHANGESET=${REV_LINE}" >> "$CM_ENV"
-            echo "UNITY_HOME=/Applications/Unity/Hub/Editor/${VER_LINE}/Unity.app" >> "$CM_ENV"
-          else
-            echo "❌ ProjectSettings/ProjectVersion.txt not found. Set UNITY_VERSION manually and ensure UNITY_HOME later."
+          if [ ! -f "ProjectSettings/ProjectVersion.txt" ]; then
+            echo "❌ ProjectSettings/ProjectVersion.txt not found."
             exit 1
           fi
+          VER_LINE=$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)
+          REV_LINE=$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt || true)
+          echo "UNITY_VERSION=${VER_LINE}" >> "$CM_ENV"
+          echo "UNITY_CHANGESET=${REV_LINE:-}" >> "$CM_ENV"
+          echo "UNITY_HOME=/Applications/Unity/Hub/Editor/${VER_LINE}/Unity.app" >> "$CM_ENV"
+          echo "Detected UNITY_VERSION=$VER_LINE"
+          echo "Detected UNITY_CHANGESET=${REV_LINE:-<none>}"
 
       - name: Install Unity via Hub if missing
         script: |
           set -euo pipefail
-
           if [ ! -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
             echo "Unity not found at $UNITY_HOME, installing via Unity Hub…"
             brew install --cask unity-hub || true
-
             HUB="/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
             if [ ! -x "$HUB" ]; then
               echo "❌ Unity Hub binary not found at $HUB"
               exit 1
             fi
-
-            # Установка редактора + iOS модуля
             if [ -n "${UNITY_CHANGESET:-}" ]; then
-              "$HUB" -- --headless install --version "${UNITY_VERSION}" --changeset "${UNITY_CHANGESET}" --module ios
+              "$HUB" -- --headless install \
+                --version "${UNITY_VERSION}" \
+                --changeset "${UNITY_CHANGESET}" \
+                --module ios \
+                -a "${UNITY_ARCH}"
             else
-              "$HUB" -- --headless install --version "${UNITY_VERSION}" --module ios
+              "$HUB" -- --headless install \
+                --version "${UNITY_VERSION}" \
+                --module ios \
+                -a "${UNITY_ARCH}"
             fi
           else
             echo "Unity already installed at $UNITY_HOME"
           fi
-
-          echo "Listing Unity bin:"
           ls -la "$UNITY_HOME/Contents/MacOS" || true
           "$UNITY_HOME/Contents/MacOS/Unity" -version || true
 
@@ -86,7 +79,6 @@ workflows:
           set -euo pipefail
           echo "UNITY_HOME=$UNITY_HOME"
           test -x "$UNITY_HOME/Contents/MacOS/Unity"
-
           "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
             -serial "${UNITY_SERIAL?}" \
             -username "${UNITY_EMAIL?}" \
@@ -154,7 +146,6 @@ workflows:
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-
         submit_to_testflight: true
         beta_groups:
           - Internal Testers
