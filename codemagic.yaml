@@ -15,7 +15,7 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
-        UNITY_ARCH: arm64              # чтобы Hub не спрашивал архитектуру
+        UNITY_ARCH: arm64              # Apple silicon (исключить интерактив в Unity Hub)
       xcode: "16.4"
       cocoapods: default
       ios_signing:
@@ -52,7 +52,10 @@ workflows:
             echo "Unity not found at $UNITY_HOME, installing via Unity Hub…"
             brew install --cask unity-hub || true
             HUB="/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
-            [ -x "$HUB" ] || { echo "❌ Unity Hub binary not found at $HUB"; exit 1; }
+            if [ ! -x "$HUB" ]; then
+              echo "❌ Unity Hub binary not found at $HUB"
+              exit 1
+            fi
             if [ -n "${UNITY_CHANGESET:-}" ]; then
               "$HUB" -- --headless install \
                 --version "${UNITY_VERSION}" \
@@ -74,12 +77,12 @@ workflows:
           ls -la "$UNITY_HOME/Contents/MacOS" || true
           "$UNITY_HOME/Contents/MacOS/Unity" -version || true
 
-      - name: Ensure Python deps for IL2CPP deploy (packaging)
+      - name: Ensure Python deps for IL2CPP deploy (packaging/requests/certifi)
         script: |
           set -euo pipefail
           python3 -m pip install --user --upgrade pip || true
-          python3 -m pip install --user packaging || true
-          python3 -c 'import importlib; print("✅ packaging found" if importlib.util.find_spec("packaging") else "⚠️ packaging NOT found")' || true
+          python3 -m pip install --user packaging requests certifi || true
+          python3 -c 'import importlib; mods=["packaging","requests","certifi"]; print("Python3 modules check:"); [print(" ",m,"ok" if importlib.util.find_spec(m) else "MISSING") for m in mods]' || true
 
       - name: Activate Unity License
         script: |
@@ -98,17 +101,28 @@ workflows:
             -projectPath . \
             -executeMethod "BuildScript.${BUILD_SCRIPT}"
 
-      - name: Quick IL2CPP sanity check (optional diagnostics)
+      - name: Check IL2CPP & bee in Editor (diagnostics)
         script: |
           set -euo pipefail
-          echo "== Check IL2CPP toolchain in Editor =="
-          find "$UNITY_HOME/Contents/il2cpp" -maxdepth 4 -name il2cpp -type f | head -n 3 || true
-          echo "== Check exported IL2CPP project =="
-          if [ -d "$UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP" ]; then
-            find "$UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP" -maxdepth 4 -type d -name "build" | head -n 5 || true
-          else
-            echo "ℹ️ $UNITY_IOS_DIR/Il2CppOutputProject/IL2CPP not found yet (Unity will generate during Xcode build)"
+          echo "Find il2cpp in Editor:"
+          find "$UNITY_HOME/Contents" -maxdepth 6 -type f -name il2cpp | head -n 10 || true
+          echo "Find bee_backend in Editor:"
+          find "$UNITY_HOME/Contents" -maxdepth 8 -type f -name bee_backend | head -n 10 || true
+
+      - name: Patch UNITY_PATH inside Xcode project (GameAssembly Run Script)
+        script: |
+          set -euo pipefail
+          PBX="$UNITY_IOS_DIR/Unity-iPhone.xcodeproj/project.pbxproj"
+          if [ ! -f "$PBX" ]; then
+            echo "❌ Xcode project not found at $PBX"
+            exit 1
           fi
+          echo "Searching UNITY_PATH in $PBX"
+          grep -n "UNITY_PATH" "$PBX" || true
+          # Переопределим export UNITY_PATH="..." на актуальный $UNITY_HOME
+          /usr/bin/sed -E -i '' "s#(export UNITY_PATH=).*#\\1\"$UNITY_HOME\"#g" "$PBX"
+          echo "After patch:"
+          grep -n "UNITY_PATH" "$PBX" || true
 
       - name: Install CocoaPods dependencies (if Podfile exists)
         script: |
@@ -134,13 +148,17 @@ workflows:
         script: |
           set -euo pipefail
           cd "$UNITY_IOS_DIR"
+          export UNITY_PATH="$UNITY_HOME"
+          export IL2CPP_PATH="$UNITY_HOME/Contents/il2cpp"
           if [ -d "Unity-iPhone.xcworkspace" ]; then
             echo "Building via workspace…"
+            UNITY_PATH="$UNITY_PATH" IL2CPP_PATH="$IL2CPP_PATH" \
             xcode-project build-ipa \
               --workspace "Unity-iPhone.xcworkspace" \
               --scheme "$XCODE_SCHEME"
           else
             echo "Building via project…"
+            UNITY_PATH="$UNITY_PATH" IL2CPP_PATH="$IL2CPP_PATH" \
             xcode-project build-ipa \
               --project "$XCODE_PROJECT" \
               --scheme "$XCODE_SCHEME"
