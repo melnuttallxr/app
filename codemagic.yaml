@@ -4,6 +4,7 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 120
     environment:
+      unity: "6000.0.7f1"
       groups:
         - app_store_credentials        # APP_STORE_CONNECT_PRIVATE_KEY, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_ISSUER_ID
         - unity_credentials            # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
@@ -33,10 +34,11 @@ workflows:
     scripts:
       - name: Activate Unity License
         script: |
-          $UNITY_HOME/Contents/MacOS/Unity -batchmode -quit -logFile \
-            -serial ${UNITY_SERIAL?} \
-            -username ${UNITY_EMAIL?} \
-            -password ${UNITY_PASSWORD?}
+          set -e
+          echo "UNITY_HOME=$UNITY_HOME"
+          test -x "$UNITY_HOME/Contents/MacOS/Unity"
+          "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
+            -serial "${UNITY_SERIAL?}" -username "${UNITY_EMAIL?}" -password "${UNITY_PASSWORD?}"
 
       - name: Generate the Xcode project from Unity
         script: |
