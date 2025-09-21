@@ -20,16 +20,8 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
+      cocoapods: default
 
-    triggering:
-      events:
-        - push
-        - tag
-        - pull_request
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: true
 
     scripts:
       - name: Activate Unity License
@@ -60,12 +52,13 @@ workflows:
         script: |
           xcode-project use-profiles
 
-      - name: Increment build number (from latest TestFlight)
+      - name: Increment build number
         script: |
-          cd "$UNITY_IOS_DIR"
-          agvtool new-version -all $(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
-
-      - name: Create archive (IPA)
+          BUILD_NUMBER=($(app-store-connect get-latest-app-store-build-number "$APP_ID") + 1)
+          cd $UNITY_IOS_DIR
+          agvtool new-version -all $BUILD_NUMBER
+          
+      - name: Build ipa for distribution
         script: |
           xcode-project build-ipa \
             --project "$UNITY_IOS_DIR/$XCODE_PROJECT" \
@@ -74,7 +67,6 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
 
     publishing:
       app_store_connect:
