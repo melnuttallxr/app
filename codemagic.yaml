@@ -1,221 +1,49 @@
-workflows:
-  unity-ios-workflow:
-    name: Unity iOS Workflow
-    instance_type: mac_mini_m2
-    max_build_duration: 120
+- name: Detect preinstalled Unity & required modules
+  script: |
+    set -euo pipefail
 
-    environment:
-      groups:
-        - app_store_credentials        # APP_STORE_CONNECT_PRIVATE_KEY, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_ISSUER_ID
-        - unity_credentials            # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
-      vars:
-        BUILD_SCRIPT: BuildIos
-        UNITY_IOS_DIR: ios
-        XCODE_PROJECT: "Unity-iPhone.xcodeproj"
-        XCODE_SCHEME: "Unity-iPhone"
-        BUNDLE_ID: "premier.sport.blast"
-        APP_STORE_APPLE_ID: 6752545993
-        UNITY_ARCH: arm64              # Apple Silicon editor
-      xcode: "16.4"
-      cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: premier.sport.blast
+    # 1) Считаем версию Unity из проекта
+    if [ ! -f "ProjectSettings/ProjectVersion.txt" ]; then
+      echo "❌ ProjectSettings/ProjectVersion.txt not found."
+      exit 1
+    fi
+    UNITY_VERSION="$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)"
+    UNITY_CHANGESET="$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt || true)"
+    UNITY_HOME="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app"
 
-    triggering:
-      events: [ push, tag, pull_request ]
-      branch_patterns:
-        - pattern: main
-          include: true
-          source: true
+    # 2) Детект наличия Editor и модулей
+    PREINSTALLED_UNITY=0
+    HAVE_IOS_MODULE=0
+    HAVE_IL2CPP=0
 
-    scripts:
-      - name: Read Unity version & changeset (from ProjectSettings)
-        script: |
-          set -euo pipefail
-          if [ ! -f "ProjectSettings/ProjectVersion.txt" ]; then
-            echo "❌ ProjectSettings/ProjectVersion.txt not found."
-            exit 1
-          fi
-          VER_LINE=$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)
-          REV_LINE=$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt || true)
-          echo "UNITY_VERSION=${VER_LINE}" >> "$CM_ENV"
-          echo "UNITY_CHANGESET=${REV_LINE:-}" >> "$CM_ENV"
-          echo "UNITY_HOME=/Applications/Unity/Hub/Editor/${VER_LINE}/Unity.app" >> "$CM_ENV"
-          echo "Detected UNITY_VERSION=$VER_LINE"
-          echo "Detected UNITY_CHANGESET=${REV_LINE:-<none>}"
+    if [ -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
+      PREINSTALLED_UNITY=1
+      IOS_MOD="$UNITY_HOME/Contents/PlaybackEngines/iOSSupport"
+      IL2CPP_DIR="$UNITY_HOME/Contents/il2cpp"
+      [ -d "$IOS_MOD" ] && HAVE_IOS_MODULE=1 || echo "⚠️ iOS module missing at $IOS_MOD"
+      [ -d "$IL2CPP_DIR" ] && HAVE_IL2CPP=1     || echo "⚠️ il2cpp dir missing at $IL2CPP_DIR"
+    else
+      echo "❌ Unity ${UNITY_VERSION} not found at ${UNITY_HOME}"
+    fi
 
-      - name: Pre-activate license if any Unity is preinstalled (improves Hub CLI reliability)
-        script: |
-          set -euo pipefail
-          # try to find any preinstalled editor to activate license before Hub install
-          UNITY_ANY="$(/usr/bin/find /Applications/Unity/Hub/Editor -maxdepth 2 -name Unity.app -print -quit 2>/dev/null || true)"
-          if [ -n "$UNITY_ANY" ]; then
-            echo "Found existing Unity at: $UNITY_ANY"
-            "$UNITY_ANY/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
-              -serial "${UNITY_SERIAL?}" -username "${UNITY_EMAIL?}" -password "${UNITY_PASSWORD?}" || true
-          else
-            echo "No preinstalled Unity found, will activate after install."
-          fi
+    # 3) Экспорт переменных для следующих шагов
+    {
+      echo "UNITY_VERSION=${UNITY_VERSION}"
+      echo "UNITY_CHANGESET=${UNITY_CHANGESET:-}"
+      echo "UNITY_HOME=${UNITY_HOME}"
+      echo "PREINSTALLED_UNITY=${PREINSTALLED_UNITY}"
+      echo "HAVE_IOS_MODULE=${HAVE_IOS_MODULE}"
+      echo "HAVE_IL2CPP=${HAVE_IL2CPP}"
+      # Удобный агрегатный флаг:
+      if [ "$PREINSTALLED_UNITY" -eq 1 ] && [ "$HAVE_IOS_MODULE" -eq 1 ] && [ "$HAVE_IL2CPP" -eq 1 ]; then
+        echo "UNITY_READY=1"
+      else
+        echo "UNITY_READY=0"
+      fi
+    } >> "$CM_ENV"
 
-      - name: Install Unity Hub (if missing)
-        script: |
-          set -euo pipefail
-          if [ ! -x "/Applications/Unity Hub.app/Contents/MacOS/Unity Hub" ]; then
-            brew install --cask unity-hub
-          fi
-          /Applications/Unity\ Hub.app/Contents/MacOS/Unity\ Hub -- --headless h || true
-
-      - name: Install Unity (Editor + iOS + mac-il2cpp) via Hub
-        script: |
-          set -euo pipefail
-          HUB="/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"
-          if [ ! -x "$HUB" ]; then
-            echo "❌ Unity Hub binary not found at $HUB"
-            exit 1
-          fi
-
-          echo "Installing Unity $UNITY_VERSION (changeset: ${UNITY_CHANGESET:-none}) arch=$UNITY_ARCH"
-          if [ -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
-            echo "Unity already installed at $UNITY_HOME"
-          else
-            if [ -n "${UNITY_CHANGESET:-}" ]; then
-              yes Y | "$HUB" -- --headless install --version "$UNITY_VERSION" --changeset "$UNITY_CHANGESET" -a "$UNITY_ARCH"
-            else
-              yes Y | "$HUB" -- --headless install --version "$UNITY_VERSION" -a "$UNITY_ARCH"
-            fi
-          fi
-
-          # ensure required modules
-          yes Y | "$HUB" -- --headless install-modules --version "$UNITY_VERSION" -m ios mac-il2cpp -a "$UNITY_ARCH"
-
-          echo "== Unity bin =="
-          ls -la "$UNITY_HOME/Contents/MacOS" || true
-          "$UNITY_HOME/Contents/MacOS/Unity" -version || true
-
-      - name: Ensure Python deps for IL2CPP (packaging/requests/certifi)
-        script: |
-          set -euo pipefail
-          python3 -m pip install --user --upgrade pip || true
-          python3 -m pip install --user packaging requests certifi || true
-          python3 - <<'PY'
-          import importlib, sys
-          mods=["packaging","requests","certifi"]
-          print("Python3 modules check:")
-          for m in mods:
-              print(" ", m, "ok" if importlib.util.find_spec(m) else "MISSING")
-          PY
-
-      - name: Activate Unity License (installed editor)
-        script: |
-          set -euo pipefail
-          "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
-            -serial "${UNITY_SERIAL?}" -username "${UNITY_EMAIL?}" -password "${UNITY_PASSWORD?}"
-
-      - name: Generate the Xcode project from Unity
-        script: |
-          set -euo pipefail
-          "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -nographics -logFile - \
-            -projectPath . \
-            -executeMethod "BuildScript.${BUILD_SCRIPT}"
-
-      - name: Check IL2CPP & Bee presence (diagnostics)
-        script: |
-          set -euo pipefail
-          echo "Find il2cpp in Editor:"
-          find "$UNITY_HOME/Contents" -maxdepth 6 -type f -name il2cpp | head -n 10 || true
-          echo "Find bee_backend in Editor:"
-          find "$UNITY_HOME/Contents" -maxdepth 8 -type f -name bee_backend | head -n 10 || true
-
-      - name: Patch UNITY_PATH / IL2CPP_PATH inside Xcode project (GameAssembly Run Script)
-        script: |
-          set -euo pipefail
-          PBX="$UNITY_IOS_DIR/Unity-iPhone.xcodeproj/project.pbxproj"
-          if [ ! -f "$PBX" ]; then
-            echo "❌ Xcode project not found at $PBX"
-            exit 1
-          fi
-
-          # Safely replace paths in embedded Run Script text (quoted in pbxproj)
-          /usr/bin/sed -E -i '' "s#(export[[:space:]]+UNITY_PATH=)\"[^\"]*\"#\\1\"$UNITY_HOME\"#g" "$PBX"
-          /usr/bin/sed -E -i '' "s#(export[[:space:]]+IL2CPP_PATH=)\"[^\"]*\"#\\1\"$UNITY_HOME/Contents/il2cpp\"#g" "$PBX"
-
-          echo "Patched variables in pbxproj:"
-          grep -nE 'UNITY_PATH|IL2CPP_PATH' "$PBX" || true
-
-      - name: Install CocoaPods dependencies (if Podfile exists)
-        script: |
-          set -euo pipefail
-          if [ -f "$UNITY_IOS_DIR/Podfile" ]; then
-            (cd "$UNITY_IOS_DIR" && pod install)
-          else
-            echo "No Podfile found in $UNITY_IOS_DIR, skipping CocoaPods."
-          fi
-
-      - name: Set up provisioning profiles settings on Xcode project
-        script: |
-          set -euo pipefail
-          (cd "$UNITY_IOS_DIR" && xcode-project use-profiles)
-
-      - name: Increment build number (from latest TestFlight)
-        script: |
-          set -euo pipefail
-          BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
-          (cd "$UNITY_IOS_DIR" && agvtool new-version -all "$BUILD_NUMBER")
-
-      - name: Clean DerivedData (avoid broken IL2CPP/Bee caches)
-        script: |
-          set -euo pipefail
-          rm -rf "$HOME/Library/Developer/Xcode/DerivedData" || true
-
-      - name: Create archive (IPA)
-        script: |
-          set -euo pipefail
-          cd "$UNITY_IOS_DIR"
-          export UNITY_PATH="$UNITY_HOME"
-          export IL2CPP_PATH="$UNITY_HOME/Contents/il2cpp"
-
-          if [ -d "Unity-iPhone.xcworkspace" ]; then
-            echo "Building via workspace…"
-            UNITY_PATH="$UNITY_PATH" IL2CPP_PATH="$IL2CPP_PATH" \
-            xcode-project build-ipa \
-              --workspace "Unity-iPhone.xcworkspace" \
-              --scheme "$XCODE_SCHEME"
-          else
-            echo "Building via project…"
-            UNITY_PATH="$UNITY_PATH" IL2CPP_PATH="$IL2CPP_PATH" \
-            xcode-project build-ipa \
-              --project "$XCODE_PROJECT" \
-              --scheme "$XCODE_SCHEME"
-          fi
-
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
-      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
-
-    publishing:
-      scripts:
-        - name: Deactivate Unity License
-          script: |
-            set -euo pipefail
-            if [ -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
-              "$UNITY_HOME/Contents/MacOS/Unity" -quit -batchmode -returnlicense -nographics || true
-            else
-              echo "Unity not found, skip returnlicense"
-            fi
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        submit_to_testflight: true
-        beta_groups:
-          - Internal Testers
-          - External QA
-        submit_to_app_store: false
-      email:
-        recipients:
-          - melnuttallxr@icloud.com
-        notify:
-          success: true
-          failure: false
+    echo "Summary:"
+    echo "  UNITY_VERSION=$UNITY_VERSION"
+    echo "  UNITY_HOME=$UNITY_HOME"
+    echo "  PREINSTALLED_UNITY=$PREINSTALLED_UNITY, iOS=$HAVE_IOS_MODULE, il2cpp=$HAVE_IL2CPP"
+    echo "  UNITY_READY=$([ "${PREINSTALLED_UNITY}" -eq 1 ] && [ "${HAVE_IOS_MODULE}" -eq 1 ] && [ "${HAVE_IL2CPP}" -eq 1 ] && echo 1 || echo 0)"
