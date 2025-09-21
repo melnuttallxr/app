@@ -20,6 +20,7 @@ workflows:
         XCODE_SCHEME: "Unity-iPhone"
         BUNDLE_ID: "premier.sport.blast"
         APP_STORE_APPLE_ID: 6752545993
+        IOS_DEPLOYMENT_TARGET: "12.0"   # минимальный iOS для линковки UserNotifications
 
     triggering:
       events:
@@ -47,6 +48,58 @@ workflows:
             -projectPath . \
             -executeMethod BuildScript.$BUILD_SCRIPT \
             -nographics
+
+      # ⬇️ Добавлено: патч .xcodeproj — добавляем UserNotifications.framework в UnityFramework и Unity-iPhone
+      - name: Patch Xcode project (link UserNotifications)
+        script: |
+          gem install xcodeproj --no-document
+          ruby - <<'RUBY'
+            require 'xcodeproj'
+
+            # Путь к .xcodeproj из переменных окружения
+            path = ENV['XCODEPROJ_PATH']
+            path ||= File.join(ENV['UNITY_IOS_DIR'] || 'ios', ENV['XCODE_PROJECT'] || 'Unity-iPhone.xcodeproj')
+
+            min_ios = ENV['IOS_DEPLOYMENT_TARGET'] || '12.0'
+            project = Xcodeproj::Project.open(path)
+
+            def ensure_framework(target, framework)
+              group = target.project.frameworks_group
+              ref = group.files.find { |f| f.display_name == framework } ||
+                    group.new_file("System/Library/Frameworks/#{framework}", :sdk_root)
+              unless target.frameworks_build_phase.files_references.include?(ref)
+                target.frameworks_build_phase.add_file_reference(ref, true)
+              end
+              # "пояс и ремень" — прописываем фреймворк в OTHER_LDFLAGS
+              target.add_build_setting('OTHER_LDFLAGS', "-framework #{framework}")
+            end
+
+            def set_min_ios(target, version)
+              target.build_configurations.each do |cfg|
+                cfg.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = version
+              end
+            end
+
+            %w[UnityFramework Unity-iPhone].each do |tname|
+              if (t = project.targets.find { |x| x.name == tname })
+                ensure_framework(t, 'UserNotifications.framework')
+                set_min_ios(t, min_ios)
+              end
+            end
+
+            project.save
+            puts "[patch] Linked UserNotifications.framework to UnityFramework & Unity-iPhone, iOS >= #{min_ios} (project: #{path})"
+          RUBY
+
+      # ⬇️ Добавлено: проверка, что фреймворк реально попал в project.pbxproj
+      - name: Verify patch
+        script: |
+          PBXPROJ="$UNITY_IOS_DIR/$XCODE_PROJECT/project.pbxproj"
+          echo "🔎 Looking for UserNotifications.framework in $PBXPROJ"
+          if ! grep -n "UserNotifications.framework" "$PBXPROJ"; then
+            echo "❌ Patch failed: UserNotifications.framework not found in $PBXPROJ"; exit 1
+          fi
+          echo "✅ Patch OK"
 
       - name: Deactivate Unity License
         script: |
