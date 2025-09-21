@@ -9,6 +9,7 @@ workflows:
         - unity_credentials           # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
       xcode: "16.4"
       vars:
+        BUILD_SCRIPT: BuildIos
         UNITY_IOS_DIR: ios
         XCODE_PROJECT: "Unity-iPhone.xcodeproj"
         XCODE_SCHEME: "Unity-iPhone"
@@ -32,3 +33,11 @@ workflows:
 
     artifacts:
       - $HOME/Library/Developer/Xcode/DerivedData/UnityBuild/Build/Products/Release-iphoneos/*.app
+  publishing:
+    scripts:
+      - name: Deactivate Unity License
+        script: | 
+          /Applications/Unity\ Hub.app/Contents/Frameworks/UnityLicensingClient_V1.app/Contents/MacOS/Unity.Licensing.Client \
+            --return-ulf \
+            --username ${UNITY_EMAIL?} \
+            --password ${UNITY_PASSWORD?}
