@@ -1,18 +1,35 @@
 workflows:
   unity-ios-activate-and-build:
-    name: "Unity iOS: Activate Xcode Build"
+    name: "Unity iOS → TestFlight"
     instance_type: mac_mini_m2
-    max_build_duration: 60
+    max_build_duration: 120
+
     environment:
       unity: 6000.0.37f1
+      xcode: "16.4"
       groups:
         - unity_credentials           # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
-      xcode: "16.4"
+        - app_store_credentials       # APP_STORE_CONNECT_PRIVATE_KEY, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_ISSUER_ID
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: premier.sport.blast
       vars:
         BUILD_SCRIPT: BuildIos
         UNITY_IOS_DIR: ios
         XCODE_PROJECT: "Unity-iPhone.xcodeproj"
         XCODE_SCHEME: "Unity-iPhone"
+        BUNDLE_ID: "premier.sport.blast"
+        APP_STORE_APPLE_ID: 6752545993
+
+    triggering:
+      events:
+        - push
+        - tag
+        - pull_request
+      branch_patterns:
+        - pattern: main
+          include: true
+          source: true
 
     scripts:
       - name: Activate Unity License
@@ -31,13 +48,47 @@ workflows:
             -executeMethod BuildScript.$BUILD_SCRIPT \
             -nographics
 
-    artifacts:
-      - $HOME/Library/Developer/Xcode/DerivedData/UnityBuild/Build/Products/Release-iphoneos/*.app
-  publishing:
-    scripts:
       - name: Deactivate Unity License
-        script: | 
+        script: |
           /Applications/Unity\ Hub.app/Contents/Frameworks/UnityLicensingClient_V1.app/Contents/MacOS/Unity.Licensing.Client \
             --return-ulf \
             --username ${UNITY_EMAIL?} \
             --password ${UNITY_PASSWORD?}
+        ignore_failure: true
+
+      - name: Set up provisioning profiles on the Xcode project
+        script: |
+          xcode-project use-profiles --project "$UNITY_IOS_DIR/$XCODE_PROJECT" --scheme "$XCODE_SCHEME"
+
+      - name: Increment build number (from latest TestFlight)
+        script: |
+          cd "$UNITY_IOS_DIR"
+          agvtool new-version -all $(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
+
+      - name: Create archive (IPA)
+        script: |
+          xcode-project build-ipa \
+            --project "$UNITY_IOS_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+
+    publishing:
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
+        beta_groups:
+          - Internal Testers
+          - External QA
+        submit_to_app_store: false
+      email:
+        recipients:
+          - melnuttallxr@icloud.com
+        notify:
+          success: true
+          failure: false
