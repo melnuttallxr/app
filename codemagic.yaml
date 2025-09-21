@@ -58,7 +58,7 @@ workflows:
 
       - name: Set up provisioning profiles on the Xcode project
         script: |
-          xcode-project use-profiles --project "$UNITY_IOS_DIR/$XCODE_PROJECT" --scheme "$XCODE_SCHEME"
+          xcode-project use-profiles
 
       - name: Increment build number (from latest TestFlight)
         script: |
