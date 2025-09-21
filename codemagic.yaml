@@ -1,49 +1,53 @@
-- name: Detect preinstalled Unity & required modules
-  script: |
-    set -euo pipefail
+workflows:
+  check-unity-only:
+    name: Check Unity Only
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    environment:
+      xcode: "16.4"
+    scripts:
+      - name: Detect preinstalled Unity & required modules
+        script: |
+          set -euo pipefail
 
-    # 1) Считаем версию Unity из проекта
-    if [ ! -f "ProjectSettings/ProjectVersion.txt" ]; then
-      echo "❌ ProjectSettings/ProjectVersion.txt not found."
-      exit 1
-    fi
-    UNITY_VERSION="$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)"
-    UNITY_CHANGESET="$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt || true)"
-    UNITY_HOME="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app"
+          if [ ! -f "ProjectSettings/ProjectVersion.txt" ]; then
+            echo "❌ ProjectSettings/ProjectVersion.txt not found."
+            exit 1
+          fi
+          UNITY_VERSION="$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)"
+          UNITY_CHANGESET="$(awk -F'[()]' '/m_EditorVersionWithRevision:/{print $2}' ProjectSettings/ProjectVersion.txt || true)"
+          UNITY_HOME="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app"
 
-    # 2) Детект наличия Editor и модулей
-    PREINSTALLED_UNITY=0
-    HAVE_IOS_MODULE=0
-    HAVE_IL2CPP=0
+          PREINSTALLED_UNITY=0
+          HAVE_IOS_MODULE=0
+          HAVE_IL2CPP=0
 
-    if [ -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
-      PREINSTALLED_UNITY=1
-      IOS_MOD="$UNITY_HOME/Contents/PlaybackEngines/iOSSupport"
-      IL2CPP_DIR="$UNITY_HOME/Contents/il2cpp"
-      [ -d "$IOS_MOD" ] && HAVE_IOS_MODULE=1 || echo "⚠️ iOS module missing at $IOS_MOD"
-      [ -d "$IL2CPP_DIR" ] && HAVE_IL2CPP=1     || echo "⚠️ il2cpp dir missing at $IL2CPP_DIR"
-    else
-      echo "❌ Unity ${UNITY_VERSION} not found at ${UNITY_HOME}"
-    fi
+          if [ -x "$UNITY_HOME/Contents/MacOS/Unity" ]; then
+            PREINSTALLED_UNITY=1
+            IOS_MOD="$UNITY_HOME/Contents/PlaybackEngines/iOSSupport"
+            IL2CPP_DIR="$UNITY_HOME/Contents/il2cpp"
+            [ -d "$IOS_MOD" ] && HAVE_IOS_MODULE=1 || echo "⚠️ iOS module missing at $IOS_MOD"
+            [ -d "$IL2CPP_DIR" ] && HAVE_IL2CPP=1     || echo "⚠️ il2cpp dir missing at $IL2CPP_DIR"
+          else
+            echo "❌ Unity ${UNITY_VERSION} not found at ${UNITY_HOME}"
+          fi
 
-    # 3) Экспорт переменных для следующих шагов
-    {
-      echo "UNITY_VERSION=${UNITY_VERSION}"
-      echo "UNITY_CHANGESET=${UNITY_CHANGESET:-}"
-      echo "UNITY_HOME=${UNITY_HOME}"
-      echo "PREINSTALLED_UNITY=${PREINSTALLED_UNITY}"
-      echo "HAVE_IOS_MODULE=${HAVE_IOS_MODULE}"
-      echo "HAVE_IL2CPP=${HAVE_IL2CPP}"
-      # Удобный агрегатный флаг:
-      if [ "$PREINSTALLED_UNITY" -eq 1 ] && [ "$HAVE_IOS_MODULE" -eq 1 ] && [ "$HAVE_IL2CPP" -eq 1 ]; then
-        echo "UNITY_READY=1"
-      else
-        echo "UNITY_READY=0"
-      fi
-    } >> "$CM_ENV"
+          {
+            echo "UNITY_VERSION=${UNITY_VERSION}"
+            echo "UNITY_CHANGESET=${UNITY_CHANGESET:-}"
+            echo "UNITY_HOME=${UNITY_HOME}"
+            echo "PREINSTALLED_UNITY=${PREINSTALLED_UNITY}"
+            echo "HAVE_IOS_MODULE=${HAVE_IOS_MODULE}"
+            echo "HAVE_IL2CPP=${HAVE_IL2CPP}"
+            if [ "$PREINSTALLED_UNITY" -eq 1 ] && [ "$HAVE_IOS_MODULE" -eq 1 ] && [ "$HAVE_IL2CPP" -eq 1 ]; then
+              echo "UNITY_READY=1"
+            else
+              echo "UNITY_READY=0"
+            fi
+          } >> "$CM_ENV"
 
-    echo "Summary:"
-    echo "  UNITY_VERSION=$UNITY_VERSION"
-    echo "  UNITY_HOME=$UNITY_HOME"
-    echo "  PREINSTALLED_UNITY=$PREINSTALLED_UNITY, iOS=$HAVE_IOS_MODULE, il2cpp=$HAVE_IL2CPP"
-    echo "  UNITY_READY=$([ "${PREINSTALLED_UNITY}" -eq 1 ] && [ "${HAVE_IOS_MODULE}" -eq 1 ] && [ "${HAVE_IL2CPP}" -eq 1 ] && echo 1 || echo 0)"
+          echo "Summary:"
+          echo "  UNITY_VERSION=$UNITY_VERSION"
+          echo "  UNITY_HOME=$UNITY_HOME"
+          echo "  PREINSTALLED_UNITY=$PREINSTALLED_UNITY, iOS=$HAVE_IOS_MODULE, il2cpp=$HAVE_IL2CPP"
+          echo "  UNITY_READY=$([ "${PREINSTALLED_UNITY}" -eq 1 ] && [ "${HAVE_IOS_MODULE}" -eq 1 ] && [ "${HAVE_IL2CPP}" -eq 1 ] && echo 1 || echo 0)"
