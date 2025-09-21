@@ -1,108 +1,53 @@
 workflows:
-  check-unity-only:
-    name: Check Unity Only
+  unity-ios-activate-and-build:
+    name: Unity iOS: Activate + Xcode Build
     instance_type: mac_mini_m2
-    max_build_duration: 10
+    max_build_duration: 60
     environment:
+      unity: 6000.0.7f1
+      groups:
+        - unity_credentials           # UNITY_SERIAL, UNITY_EMAIL, UNITY_PASSWORD
       xcode: "16.4"
+      vars:
+        UNITY_IOS_DIR: ios
+        XCODE_PROJECT: "Unity-iPhone.xcodeproj"
+        XCODE_SCHEME: "Unity-iPhone"
 
     scripts:
-      - name: Detect any preinstalled Unity editors (and pick best candidate)
+      - name: Activate Unity License
         script: |
           set -euo pipefail
-
-          # Desired version from the project (may be empty if file missing)
-          UNITY_PROJECT_VERSION=""
-          if [ -f "ProjectSettings/ProjectVersion.txt" ]; then
-            UNITY_PROJECT_VERSION="$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)"
+          # autodetect UNITY_HOME from ProjectVersion.txt if not provided
+          if [ -z "${UNITY_HOME:-}" ]; then
+            if [ -f "ProjectSettings/ProjectVersion.txt" ]; then
+              UNITY_VERSION="$(awk -F': ' '/m_EditorVersion:/{print $2}' ProjectSettings/ProjectVersion.txt)"
+              export UNITY_HOME="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app"
+            fi
           fi
+          echo "Using UNITY_HOME=${UNITY_HOME:?UNITY_HOME is not set}"
+          "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -logFile -nographics \
+            -serial "${UNITY_SERIAL?}" \
+            -username "${UNITY_EMAIL?}" \
+            -password "${UNITY_PASSWORD?}"
 
-          ROOT="/Applications/Unity/Hub/Editor"
-          echo "Looking for Unity editors under: $ROOT"
+      - name: Generate Xcode project from Unity
+        script: |
+          set -euo pipefail
+          echo "Using UNITY_HOME=${UNITY_HOME:?}"
+          "$UNITY_HOME/Contents/MacOS/Unity" -batchmode -quit -logFile -nographics \
+            -projectPath . \
+            -executeMethod "BuildScript.BuildIos"
 
-          UNITY_ANY_INSTALLED=0
-          UNITY_INSTALLED_LIST=""
-          CANDIDATE_VERSION=""
-          CANDIDATE_HOME=""
-          CAND_HAS_IOS=0
-          CAND_HAS_IL2CPP=0
-          MATCH_EXACT=0
-          BEST_RANK=999
+      - name: Build Xcode project (compile only)
+        script: |
+          set -euo pipefail
+          cd "$UNITY_IOS_DIR"
+          xcodebuild -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$HOME/Library/Developer/Xcode/DerivedData/UnityBuild" \
+            build
 
-          if [ -d "$ROOT" ]; then
-            for dir in "$ROOT"/*; do
-              [ -d "$dir" ] || continue
-              base="$(basename "$dir")"
-              uapp="$dir/Unity.app"
-              ubin="$uapp/Contents/MacOS/Unity"
-              [ -x "$ubin" ] || continue
-
-              UNITY_ANY_INSTALLED=1
-
-              ios_mod="$uapp/Contents/PlaybackEngines/iOSSupport"
-              il2cpp_dir="$uapp/Contents/il2cpp"
-              has_ios=0;   [ -d "$ios_mod" ]   && has_ios=1
-              has_il2=0;   [ -d "$il2cpp_dir" ] && has_il2=1
-
-              if [ -z "$UNITY_INSTALLED_LIST" ]; then
-                UNITY_INSTALLED_LIST="$base"
-              else
-                UNITY_INSTALLED_LIST="$UNITY_INSTALLED_LIST,$base"
-              fi
-
-              echo " • Found Unity $base  (iOS:$has_ios, il2cpp:$has_il2)  → $uapp"
-
-              # Ranking:
-              # 1) exact + both modules
-              # 2) exact
-              # 3) any + both modules
-              # 4) any editor
-              rank=4
-              if [ -n "$UNITY_PROJECT_VERSION" ] && [ "$base" = "$UNITY_PROJECT_VERSION" ] && [ $has_ios -eq 1 ] && [ $has_il2 -eq 1 ]; then
-                rank=1
-              elif [ -n "$UNITY_PROJECT_VERSION" ] && [ "$base" = "$UNITY_PROJECT_VERSION" ]; then
-                rank=2
-              elif [ $has_ios -eq 1 ] && [ $has_il2 -eq 1 ]; then
-                rank=3
-              else
-                rank=4
-              fi
-
-              if [ $rank -lt $BEST_RANK ]; then
-                BEST_RANK=$rank
-                CANDIDATE_VERSION="$base"
-                CANDIDATE_HOME="$uapp"
-                CAND_HAS_IOS=$has_ios
-                CAND_HAS_IL2CPP=$has_il2
-                MATCH_EXACT=0
-                if [ -n "$UNITY_PROJECT_VERSION" ] && [ "$base" = "$UNITY_PROJECT_VERSION" ]; then
-                  MATCH_EXACT=1
-                fi
-              fi
-            done
-          else
-            echo "No Unity Hub editors directory found."
-          fi
-
-          UNITY_READY=0
-          if [ -n "$CANDIDATE_HOME" ] && [ $CAND_HAS_IOS -eq 1 ] && [ $CAND_HAS_IL2CPP -eq 1 ]; then
-            UNITY_READY=1
-          fi
-
-          {
-            echo "UNITY_PROJECT_VERSION=${UNITY_PROJECT_VERSION}"
-            echo "UNITY_ANY_INSTALLED=${UNITY_ANY_INSTALLED}"
-            echo "UNITY_INSTALLED_LIST=${UNITY_INSTALLED_LIST}"
-            echo "UNITY_CANDIDATE_VERSION=${CANDIDATE_VERSION}"
-            echo "UNITY_CANDIDATE_HOME=${CANDIDATE_HOME}"
-            echo "UNITY_CANDIDATE_HAS_IOS=${CAND_HAS_IOS}"
-            echo "UNITY_CANDIDATE_HAS_IL2CPP=${CAND_HAS_IL2CPP}"
-            echo "UNITY_MATCH_EXACT=${MATCH_EXACT}"
-            echo "UNITY_READY=${UNITY_READY}"
-          } >> "$CM_ENV"
-
-          echo "Summary:"
-          echo "  Project wants: ${UNITY_PROJECT_VERSION:-<not specified>}"
-          echo "  Installed:     ${UNITY_INSTALLED_LIST:-<none>}"
-          echo "  Candidate:     ${CANDIDATE_VERSION:-<none>}  (exact=$MATCH_EXACT, iOS=$CAND_HAS_IOS, il2cpp=$CAND_HAS_IL2CPP)"
-          echo "  UNITY_READY:   $UNITY_READY"
+    artifacts:
+      - $HOME/Library/Developer/Xcode/DerivedData/UnityBuild/Build/Products/Release-iphoneos/*.app
