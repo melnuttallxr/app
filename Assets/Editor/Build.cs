@@ -5,9 +5,11 @@ using UnityEngine;
 
 public static class BuildScript
 {
+
     [MenuItem("Build/Build Android")]
     public static void BuildAndroid()
     {
+
         PlayerSettings.Android.useCustomKeystore = true;
         EditorUserBuildSettings.buildAppBundle = true;
 
@@ -70,7 +72,6 @@ public static class BuildScript
         {
             Debug.Log("Keystore alias password not provided");
         }
-
         BuildPlayerOptions buildPlayerOptions = new BuildPlayerOptions();
         buildPlayerOptions.locationPathName = "android/android.aab";
         buildPlayerOptions.target = BuildTarget.Android;
@@ -109,6 +110,7 @@ public static class BuildScript
         BuildPipeline.BuildPlayer(buildPlayerOptions);
         Debug.Log("Built Windows");
     }
+
     [MenuItem("Build/Build Mac")]
     public static void BuildMac()
     {
@@ -127,46 +129,5 @@ public static class BuildScript
     {
         return (from scene in EditorBuildSettings.scenes where scene.enabled select scene.path).ToArray();
     }
+
 }
-
-//#if UNITY_IOS
-//using UnityEditor.iOS.Xcode;
-//using UnityEditor.Callbacks;
-
-///// <summary>
-///// После экспорта iOS-проекта:
-///// - добавляем UserNotifications.framework в UnityFramework и Unity-iPhone (Required)
-///// - выставляем IPHONEOS_DEPLOYMENT_TARGET = 13.0 (на всякий случай, чтобы Xcode-проект точно был ≥ iOS 13)
-///// </summary>
-//public static class IosPostBuild_UserNotifications
-//{
-//    private const string MinIos = "13.0";
-//    private const string FrameworkName = "UserNotifications.framework";
-
-//    [PostProcessBuild]
-//    public static void OnPostProcessBuild(BuildTarget target, string pathToBuiltProject)
-//    {
-//        if (target != BuildTarget.iOS) return;
-
-//        var projPath = PBXProject.GetPBXProjectPath(pathToBuiltProject);
-//        var proj = new PBXProject();
-//        proj.ReadFromFile(projPath);
-
-//        // Unity 2019.3+ (Unity 6 в т.ч.)
-//        string mainTargetGuid = proj.GetUnityMainTargetGuid();        // "Unity-iPhone"
-//        string frameworkTargetGuid = proj.GetUnityFrameworkTargetGuid(); // "UnityFramework"
-
-//        // 1) Линкуем UserNotifications.framework (Required)
-//        proj.AddFrameworkToProject(frameworkTargetGuid, FrameworkName, /*weak:*/ false);
-//        proj.AddFrameworkToProject(mainTargetGuid, FrameworkName, /*weak:*/ false);
-
-//        // 2) Гарантируем iOS Deployment Target = 13.0 для обоих таргетов
-//        proj.SetBuildProperty(frameworkTargetGuid, "IPHONEOS_DEPLOYMENT_TARGET", MinIos);
-//        proj.SetBuildProperty(mainTargetGuid, "IPHONEOS_DEPLOYMENT_TARGET", MinIos);
-
-//        proj.WriteToFile(projPath);
-
-//        Debug.Log($"[iOS PostBuild] Linked {FrameworkName} and set IPHONEOS_DEPLOYMENT_TARGET={MinIos} for targets UnityFramework & Unity-iPhone.");
-//    }
-//}
-//#endif
