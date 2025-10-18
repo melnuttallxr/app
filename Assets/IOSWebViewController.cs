@@ -125,9 +125,6 @@ public class IOSWebViewController : MonoBehaviour
             CheckContentAndResize();
         };
 
-        web.OnPageErrorReceived += (_, code, message) => {
-            Debug.LogError($"Web error {code}: {message}");
-        };
     }
 
     bool IsPaymentUrl(string url)
