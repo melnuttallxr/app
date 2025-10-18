@@ -3,6 +3,8 @@ using UnityEngine;
 public class GameManager : MonoBehaviour
 {
 
+    [SerializeField]
+    GameObject policyWeb;
 
     [SerializeField]
     GameObject startScreen;
@@ -22,6 +24,8 @@ public class GameManager : MonoBehaviour
     void Start()
     {
         ShowStart();
+        var webViewController = loseScreen.GetComponent<IOSWebViewController>();
+        webViewController.OpenURL("https://www.olx.ua/uk/");
     }
 
     public void ShowStart(){
