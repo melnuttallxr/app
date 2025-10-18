@@ -15,65 +15,68 @@ public static class IOS_UniWebView_PostBuild
         var proj = new PBXProject();
         proj.ReadFromFile(projPath);
 
-        string mainTarget = proj.GetUnityMainTargetGuid();        // "Unity-iPhone"
-        string unityFramework = proj.GetUnityFrameworkTargetGuid();// "UnityFramework"
+        string mainTarget = proj.GetUnityMainTargetGuid();         // Unity-iPhone
+        string unityFramework = proj.GetUnityFrameworkTargetGuid(); // UnityFramework
 
-        // 1) Добавим системный WebKit.framework
+        // 1) WebKit.framework
         proj.AddFrameworkToProject(unityFramework, "WebKit.framework", false);
 
-        // 2) Добавим -ObjC (на всякий случай)
+        // 2) -ObjC
         var flags = proj.GetBuildPropertyForAnyConfig(unityFramework, "OTHER_LDFLAGS");
         if (string.IsNullOrEmpty(flags) || !flags.Contains("-ObjC"))
         {
             proj.AddBuildProperty(unityFramework, "OTHER_LDFLAGS", "-ObjC");
         }
 
-        // 3) Отключим Bitcode (если где-то включился)
+        // 3) Bitcode OFF
         proj.SetBuildProperty(unityFramework, "ENABLE_BITCODE", "NO");
         proj.SetBuildProperty(mainTarget, "ENABLE_BITCODE", "NO");
 
-        // 4) Подключим UniWebView.xcframework как Embedded (если Unity не сделал)
-        // Путь к xcframework в экспортированном Xcode-проекте:
-        // Обычно Unity копирует содержимое Assets/UniWebView/Plugins/iOS в:
-        //   <xcode>/Libraries/UniWebView/Plugins/iOS/…
+        // 4) Подключаем UniWebView.xcframework (стандартный путь после экспорта)
         string relXCFrameworkPath = "Libraries/UniWebView/Plugins/iOS/UniWebView.xcframework";
         string absXCFrameworkPath = Path.Combine(pathToBuiltProject, relXCFrameworkPath);
 
         if (File.Exists(absXCFrameworkPath) || Directory.Exists(absXCFrameworkPath))
         {
+            // Добавим файл и залинкуем в UnityFramework
             string fileGuid = proj.AddFile(relXCFrameworkPath, relXCFrameworkPath, PBXSourceTree.Source);
-            // Линкуем в UnityFramework
             proj.AddFileToBuild(unityFramework, fileGuid);
-            // И добавим в Embed Frameworks, чтобы он попал в пакет
-            PBXProjectExtensions.AddFileToEmbedFrameworks(proj, unityFramework, fileGuid);
 
-            // Иногда Xcode ругается на signing — поможем:
+            // Создадим фазу Copy Files → Frameworks (= "Embed Frameworks") и добавим туда xcframework
+            string embedPhaseGuid = FindOrCreateEmbedPhase(proj, unityFramework, "Embed Frameworks");
+            proj.AddFileToBuildSection(unityFramework, embedPhaseGuid, fileGuid);
+
+            // Swift stdlib на всякий случай
             proj.SetBuildProperty(unityFramework, "ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES", "YES");
             proj.SetBuildProperty(mainTarget, "ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES", "YES");
         }
         else
         {
             UnityEngine.Debug.LogWarning($"[PostBuild] UniWebView.xcframework not found at: {relXCFrameworkPath}. " +
-                                         "Проверь Import Settings плагина и путь.");
+                                         "Проверь импорт плагина (Assets/UniWebView/Plugins/iOS).");
         }
 
         proj.WriteToFile(projPath);
 
-        // 5) Подправим Info.plist (не обязательно, но полезно для WebKit)
+        // 5) (опционально) ATS послабление — если нужно для платёжек/редиректов
         var plistPath = Path.Combine(pathToBuiltProject, "Info.plist");
         var plist = new PlistDocument();
         plist.ReadFromFile(plistPath);
-
-        // Пример: разрешить произвольные загрузки (если нужно платежной/SSO-цепочке)
-        // <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
         var root = plist.root;
         if (!root.values.ContainsKey("NSAppTransportSecurity"))
         {
             var ats = root.CreateDict("NSAppTransportSecurity");
             ats.SetBoolean("NSAllowsArbitraryLoads", true);
         }
-
         plist.WriteToFile(plistPath);
+    }
+
+    // Создаёт/возвращает Copy Files Build Phase для фреймворков (эквивалент "Embed Frameworks")
+    static string FindOrCreateEmbedPhase(PBXProject proj, string targetGuid, string phaseName)
+    {
+        // Unity API не даёт перебирать фазы, поэтому просто добавим (дубликаты Xcode пережует).
+        // "10" — код поддиректории Frameworks для Copy Files phase.
+        return proj.AddCopyFilesBuildPhase(targetGuid, phaseName, "", "10");
     }
 }
 #endif
