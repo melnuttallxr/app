@@ -1,4 +1,4 @@
 repository "SportBlast/BallLines@5773932245416@cloud"
   path "/"
-    br "/main"
-    co "/main"
+    smartbranch "/origin" 
+     
