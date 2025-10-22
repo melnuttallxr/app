@@ -5,10 +5,3 @@ AssemblyDefinitionImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 229334
-  packageName: UniWebView 5
-  packageVersion: 5.17.5
-  assetPath: Assets/UniWebView/Editor/UniWebView-CSharp.Editor.asmdef
-  uploadId: 796586

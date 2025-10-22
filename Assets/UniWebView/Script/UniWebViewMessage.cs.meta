@@ -1,7 +1,7 @@
 fileFormatVersion: 2
 guid: 0dbdb1ed01b9747a1ad6eb7bcc7b4014
 timeCreated: 1491898971
-licenseType: Store
+licenseType: Free
 MonoImporter:
   serializedVersion: 2
   defaultReferences: []
@@ -10,10 +10,3 @@ MonoImporter:
   userData: 
   assetBundleName: 
   assetBundleVariant: 
-AssetOrigin:
-  serializedVersion: 1
-  productId: 229334
-  packageName: UniWebView 5
-  packageVersion: 5.17.5
-  assetPath: Assets/UniWebView/Script/UniWebViewMessage.cs
-  uploadId: 796586
