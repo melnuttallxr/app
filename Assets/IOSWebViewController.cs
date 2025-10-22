@@ -1,79 +1,111 @@
 using UnityEngine;
 using System;
+using System.Collections;
 
 public class IOSWebViewController : MonoBehaviour
 {
     [Header("Layout")]
-    [SerializeField] RectTransform container;   // область рендера webview (RectTransform в Canvas)
+    [SerializeField] private RectTransform container;    // область для webview (RectTransform на Canvas)
+
+    [Header("Sizing on OpenURL")]
+    [SerializeField] private bool expandOnOpen = true;   // растягивать контейнер при OpenURL
+    [SerializeField] private bool useSafeArea = true;    // true = по safe-area, false = весь экран, включая вырезы
 
     [Header("iOS Behaviors")]
-    [SerializeField] bool openExternalSchemes = true;   // tel:, mailto:, tg: и т.п.
-    [SerializeField] bool useSafariForExternal = true;  // SafariViewController для внешних ссылок
-    [SerializeField] bool allowSwipeNavGestures = true; // свайпы назад/вперёд (WKWebView)
-    [SerializeField] bool inlineMediaPlayback = true;   // <video playsinline>
-    [SerializeField] bool autoPlayMedia = false;        // автоплей (включать осознанно)
-    [SerializeField] string[] paymentUrlMarkers = { "payment", "/pay", "/checkout" };
+    [SerializeField] private bool openExternalSchemes = true;   // tel:, mailto:, tg:, и т.п.
+    [SerializeField] private bool useSafariForExternal = true;  // SafariVC для внешних ссылок
+    [SerializeField] private bool allowSwipeNavGestures = true; // свайпы назад/вперёд
+    [SerializeField] private bool inlineMediaPlayback = true;   // <video playsinline>
+    [SerializeField] private bool autoPlayMedia = false;        // автоплей (включать осознанно)
+    [SerializeField] private string[] paymentUrlMarkers = { "payment", "/pay", "/checkout" };
 
     private UniWebView web;
-    private Rect lastSafeArea;
+    private bool isInitDone;
     private bool isPaymentPage;
 
-    // режимы контейнера
-    private bool useExpandedContainer = false;
-
-    // исходная геометрия контейнера
+    // исходная геометрия контейнера (можно вернуть при необходимости)
     private Vector2 origAnchorMin, origAnchorMax;
     private Vector2 origOffsetMin, origOffsetMax;
-    private bool originalSaved = false;
+    private bool originalSaved;
 
-    void Awake()
+    // если OpenURL прилетел до инициализации
+    private string pendingUrl;
+    private bool pendingRememberHome;
+
+    private string homeUrl; // опционально устанавливается из кода/через OpenURL(..., rememberAsHome:true)
+
+    private void Awake()
     {
         web = gameObject.AddComponent<UniWebView>();
     }
 
-    void Start()
+    private IEnumerator Start()
     {
         if (container == null)
         {
             Debug.LogError("[IOSWebViewController] Container is not assigned.");
-            return;
+            yield break;
         }
 
-        // сохраним исходные привязки контейнера
         SaveOriginalContainerLayout();
-
         ConfigureIOS();
         HookEvents();
 
-        // фрейм выставим по текущему контейнеру
-        UpdateWebViewFrame();
+        // ждём кадр, чтобы Canvas/RectTransform стабилизировались
+        yield return null;
+
+        // ключевое — привязать web к контейнеру (дальше он сам будет подстраиваться)
+        web.ReferenceRectTransform = container;
+
+        isInitDone = true;
+
+        // если пользоват. успел вызвать OpenURL раньше — загрузим теперь
+        if (!string.IsNullOrEmpty(pendingUrl))
+        {
+            DoOpen(pendingUrl, pendingRememberHome);
+            pendingUrl = null;
+        }
     }
 
-    // ===================== ПУБЛИЧНОЕ API =====================
+    private void OnDestroy()
+    {
+        if (web != null) { Destroy(web); web = null; }
+    }
 
-    /// <summary>
-    /// Открыть URL во вью. Если rememberAsHome = true, URL будет сохранён как "домой".
-    /// </summary>
+    // ===================== PUBLIC API =====================
+
+    /// Открыть URL (без автозагрузки в Start). Если rememberAsHome = true — запоминаем как "домой".
     public void OpenURL(string url, bool rememberAsHome = false)
     {
         if (string.IsNullOrEmpty(url)) return;
-        if (rememberAsHome) homeUrl = url;
-        web.Load(url);
-        web.Show();
-        UpdateWebViewFrame();
+
+        if (!isInitDone)
+        {
+            // запомним, выполним сразу после инициализации
+            pendingUrl = url;
+            pendingRememberHome = rememberAsHome;
+            return;
+        }
+
+        DoOpen(url, rememberAsHome);
     }
 
-    /// <summary>Назначить домашний URL (для быстрого возврата).</summary>
-    public void SetHomeUrl(string url) { homeUrl = url; }
+    /// Установить "домашний" URL (без немедленной загрузки).
+    public void SetHomeUrl(string url)
+    {
+        if (!string.IsNullOrEmpty(url))
+            homeUrl = url;
+    }
 
     public void Reload() => web?.Reload();
 
     public void NavigateHome()
     {
-        if (!string.IsNullOrEmpty(homeUrl)) web?.Load(homeUrl);
+        if (!string.IsNullOrEmpty(homeUrl))
+            web?.Load(homeUrl);
     }
 
-    /// <summary>Back UX: если на платёжной и есть homeUrl — уходит "домой", иначе back/close.</summary>
+    /// UX: если на платёжной и есть homeUrl — уходим домой, иначе back/close.
     public void GoBackOrClose()
     {
         if (isPaymentPage && !string.IsNullOrEmpty(homeUrl)) { web.Load(homeUrl); return; }
@@ -86,11 +118,25 @@ public class IOSWebViewController : MonoBehaviour
         gameObject.SetActive(false);
     }
 
-    // ===================== ВНУТРЕННЕЕ =====================
+    // ===================== INTERNAL =====================
 
-    private string homeUrl; // устанавливается кодом
+    private void DoOpen(string url, bool rememberAsHome)
+    {
+        if (rememberAsHome) homeUrl = url;
 
-    void ConfigureIOS()
+        // По вашему требованию — растянуть контейнер ПЕРЕД загрузкой
+        if (expandOnOpen)
+        {
+            if (useSafeArea) ExpandContainerToSafeArea();
+            else ExpandContainerToFullScreen();
+        }
+
+        // Показ + загрузка
+        web.Show();
+        web.Load(url);
+    }
+
+    private void ConfigureIOS()
     {
         UniWebView.SetAllowInlinePlay(inlineMediaPlayback);
         UniWebView.SetAllowAutoPlay(autoPlayMedia);
@@ -101,41 +147,54 @@ public class IOSWebViewController : MonoBehaviour
         web.SetShowToolbar(false);
         web.SetBouncesEnabled(true);
         web.BackgroundColor = Color.black;
-
-        // стабильнее без popup-окон на мобилке
         web.SetSupportMultipleWindows(false, false);
     }
 
-    void HookEvents()
+    private void HookEvents()
     {
-        // перехват внешних схем
-        web.OnPageStarted += (view, url) => {
+        web.OnPageStarted += (view, url) =>
+        {
             if (!openExternalSchemes || string.IsNullOrEmpty(url)) return;
+
             if (IsExternalScheme(url))
             {
-                try { Application.OpenURL(url); } catch (Exception e) { Debug.LogWarning($"Open external URL failed: {url}\n{e}"); }
+                try { Application.OpenURL(url); }
+                catch (Exception e) { Debug.LogWarning($"[Web] Open external URL failed: {url}\n{e}"); }
                 view.Stop();
             }
         };
 
-        web.OnPageFinished += (_, __, url) => {
+        web.OnPageFinished += (_, statusCode, url) =>
+        {
             isPaymentPage = IsPaymentUrl(url);
             InjectViewportFitCover();
-            // Проверим содержимое и подстроим контейнер/вебвью
-            CheckContentAndResize();
+
+            // если хотите ещё и на платёжных растягивать (вдруг приехали туда не из OpenURL)
+            if (isPaymentPage && expandOnOpen)
+            {
+                if (useSafeArea) ExpandContainerToSafeArea();
+                else ExpandContainerToFullScreen();
+            }
         };
 
+        web.OnPageErrorReceived += (_, code, message) =>
+        {
+            Debug.LogError($"[Web] Error: {code} {message}");
+        };
     }
 
-    bool IsPaymentUrl(string url)
+    private bool IsPaymentUrl(string url)
     {
         if (string.IsNullOrEmpty(url)) return false;
         foreach (var m in paymentUrlMarkers)
-            if (url.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        {
+            if (url.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+        }
         return false;
     }
 
-    bool IsExternalScheme(string url) =>
+    private static bool IsExternalScheme(string url) =>
         url.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("tel:", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("sms:", StringComparison.OrdinalIgnoreCase) ||
@@ -146,9 +205,8 @@ public class IOSWebViewController : MonoBehaviour
         url.StartsWith("alipays:", StringComparison.OrdinalIgnoreCase) ||
         url.StartsWith("intent:", StringComparison.OrdinalIgnoreCase);
 
-    void InjectViewportFitCover()
+    private void InjectViewportFitCover()
     {
-        // добавим viewport-fit=cover и тёмный фон, если сайт забыл
         var js =
             "if(!document.querySelector('meta[name=\\\"viewport\\\"]')){" +
             "var m=document.createElement('meta');" +
@@ -159,37 +217,9 @@ public class IOSWebViewController : MonoBehaviour
         web.EvaluateJavaScript(js, _ => { });
     }
 
-    // === ЛОГИКА ПРОВЕРКИ КОНТЕНТА И РЕСАЙЗА ===
-    void CheckContentAndResize()
-    {
-        // Быстро/надёжно: ищем в видимом тексте документа "Hello World"
-        const string js =
-            "(function(){try{" +
-            "var t=(document.body&&document.body.innerText)||'';" +
-            "return t.indexOf('Hello World')>=0 ? '1':'0';" +
-            "}catch(e){return '0';}})();";
+    // ===== Работа с контейнером =====
 
-        web.EvaluateJavaScript(js, result => {
-            bool hasHello = (result != null && result.resultCode == "0" && result.data == "1");
-            if (hasHello)
-            {
-                // Контейнер остаётся исходным → вебвью по размеру контейнера
-                useExpandedContainer = false;
-                RestoreOriginalContainerLayout();
-                UpdateWebViewFrame();
-            }
-            else
-            {
-                // Расширяем контейнер до всей safe-area → вебвью по контейнеру
-                useExpandedContainer = true;
-                ExpandContainerToSafeArea();
-                UpdateWebViewFrame();
-            }
-        });
-    }
-
-    // === Работа с контейнером и фреймом ===
-    void SaveOriginalContainerLayout()
+    private void SaveOriginalContainerLayout()
     {
         if (container == null) return;
         origAnchorMin = container.anchorMin;
@@ -199,75 +229,40 @@ public class IOSWebViewController : MonoBehaviour
         originalSaved = true;
     }
 
-    void RestoreOriginalContainerLayout()
+    /// Восстановить исходные привязки (если вдруг понадобится).
+    public void RestoreOriginalContainerLayout()
     {
         if (!originalSaved || container == null) return;
         container.anchorMin = origAnchorMin;
         container.anchorMax = origAnchorMax;
         container.offsetMin = origOffsetMin;
         container.offsetMax = origOffsetMax;
-        lastSafeArea = new Rect(0, 0, 0, 0); // форсируем пересчёт фрейма
     }
 
-    void ExpandContainerToSafeArea()
+    /// Растянуть контейнер по **safe-area**.
+    public void ExpandContainerToSafeArea()
     {
         if (container == null) return;
+
         var safe = Screen.safeArea;
         Vector2 amin = safe.position, amax = safe.position + safe.size;
-        amin.x /= Screen.width; amin.y /= Screen.height;
-        amax.x /= Screen.width; amax.y /= Screen.height;
+        amin.x /= Screen.width;  amin.y /= Screen.height;
+        amax.x /= Screen.width;  amax.y /= Screen.height;
 
         container.anchorMin = amin;
         container.anchorMax = amax;
         container.offsetMin = Vector2.zero;
         container.offsetMax = Vector2.zero;
-        lastSafeArea = new Rect(0, 0, 0, 0); // форсируем пересчёт фрейма
     }
 
-    void Update()
+    /// Растянуть контейнер на **весь экран**, включая зоны вырезов/динамических островов.
+    public void ExpandContainerToFullScreen()
     {
-        // если контейнер в режиме расширения — следим за изменением safe-area (повороты, split view)
-        if (useExpandedContainer)
-        {
-            ApplySafeAreaIfChanged();
-        }
-        // фрейм вебвью актуализируем каждый апдейт (лёгкая операция)
-        UpdateWebViewFrame();
-    }
+        if (container == null) return;
 
-    void ApplySafeAreaIfChanged()
-    {
-        if (!container) return;
-        var safe = Screen.safeArea;
-        if (safe == lastSafeArea) return;
-        lastSafeArea = safe;
-
-        if (useExpandedContainer)
-        {
-            // только в этом режиме меняем контейнер под safe-area
-            Vector2 amin = safe.position, amax = safe.position + safe.size;
-            amin.x /= Screen.width; amin.y /= Screen.height;
-            amax.x /= Screen.width; amax.y /= Screen.height;
-
-            container.anchorMin = amin;
-            container.anchorMax = amax;
-            container.offsetMin = Vector2.zero;
-            container.offsetMax = Vector2.zero;
-        }
-    }
-
-    void UpdateWebViewFrame()
-    {
-        if (web == null || container == null) return;
-        var wc = new Vector3[4];
-        container.GetWorldCorners(wc);
-        var bl = RectTransformUtility.WorldToScreenPoint(null, wc[0]);
-        var tr = RectTransformUtility.WorldToScreenPoint(null, wc[2]);
-        web.Frame = new Rect(bl.x, Screen.height - tr.y, tr.x - bl.x, tr.y - bl.y);
-    }
-
-    void OnDestroy()
-    {
-        if (web != null) { Destroy(web); web = null; }
+        container.anchorMin = Vector2.zero;      // (0,0)
+        container.anchorMax = Vector2.one;       // (1,1)
+        container.offsetMin = Vector2.zero;
+        container.offsetMax = Vector2.zero;
     }
 }
