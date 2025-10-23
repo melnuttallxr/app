@@ -19,12 +19,15 @@ public class GameManager : MonoBehaviour
     GameObject loseScreen;
 
     [SerializeField]
+    GameObject profileScreen;
+
+    [SerializeField]
     AudioManager audioManager;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
     {
         ShowStart();
-        webViewController.OpenURL("https://www.olx.ua/uk/");
+        webViewController.OpenURL("https://www.olx.ua/uk/", true);
     }
 
     public void ShowStart(){
@@ -51,6 +54,13 @@ public class GameManager : MonoBehaviour
         var gameScript = gameScreen.GetComponent<GameScript>();
         gameScript.NewGame();
     }
+
+    public void ShowProfile()
+    {
+        var profileScript = profileScreen.GetComponent<ProfileScript>();
+        profileScript.Show();
+    }
+
     // Update is called once per frame
     void Update()
     {

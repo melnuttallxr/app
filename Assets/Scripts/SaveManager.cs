@@ -17,8 +17,18 @@ public class SaveManger
         PlayerPrefs.Save();
     }
 
-    public static int getBest(){
+    public static int getBest()
+    {
         return PlayerPrefs.GetInt("BEST", 0);
+    }
+    
+    public static void saveName(string name){
+        PlayerPrefs.SetString("NAME", name);
+        PlayerPrefs.Save();
+    }
+
+    public static string getName(){
+        return PlayerPrefs.GetString("NAME", "Guest");
     }
 
     public static bool isMusic(){

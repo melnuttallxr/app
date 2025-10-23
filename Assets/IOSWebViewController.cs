@@ -124,14 +124,13 @@ public class IOSWebViewController : MonoBehaviour
     {
         if (rememberAsHome) homeUrl = url;
 
-        // По вашему требованию — растянуть контейнер ПЕРЕД загрузкой
+        // по умолчанию: растягиваем контейнер перед загрузкой
         if (expandOnOpen)
         {
             if (useSafeArea) ExpandContainerToSafeArea();
             else ExpandContainerToFullScreen();
         }
 
-        // Показ + загрузка
         web.Show();
         web.Load(url);
     }
@@ -147,7 +146,7 @@ public class IOSWebViewController : MonoBehaviour
         web.SetShowToolbar(false);
         web.SetBouncesEnabled(true);
         web.BackgroundColor = Color.black;
-        web.SetSupportMultipleWindows(false, false);
+        web.SetSupportMultipleWindows(true, true);
     }
 
     private void HookEvents()
@@ -169,18 +168,36 @@ public class IOSWebViewController : MonoBehaviour
             isPaymentPage = IsPaymentUrl(url);
             InjectViewportFitCover();
 
-            // если хотите ещё и на платёжных растягивать (вдруг приехали туда не из OpenURL)
-            if (isPaymentPage && expandOnOpen)
+            // Проверка текста на "Hello world"
+            const string jsCheck = @"
+                (function() {
+                    try {
+                        var text = (document.body && document.body.innerText) || '';
+                        return text.indexOf('a') >= 0 ? '1' : '0';
+                    } catch(e) { return '0'; }
+                })();";
+
+            web.EvaluateJavaScript(jsCheck, result =>
             {
-                if (useSafeArea) ExpandContainerToSafeArea();
-                else ExpandContainerToFullScreen();
-            }
+                bool hasHelloWorld = (result != null && result.data == "1");
+
+                if (hasHelloWorld)
+                {
+                    RestoreOriginalContainerLayout();
+                    Debug.Log("[Web] Найден 'Hello world' — контейнер оставлен как есть.");
+                }
+                else
+                {
+                    if ((isPaymentPage || expandOnOpen) && useSafeArea)
+                        ExpandContainerToSafeArea();
+                    else if ((isPaymentPage || expandOnOpen))
+                        ExpandContainerToFullScreen();
+
+                    Debug.Log("[Web] 'Hello world' не найден — контейнер расширен.");
+                }
+            });
         };
 
-        web.OnPageErrorReceived += (_, code, message) =>
-        {
-            Debug.LogError($"[Web] Error: {code} {message}");
-        };
     }
 
     private bool IsPaymentUrl(string url)
@@ -229,7 +246,6 @@ public class IOSWebViewController : MonoBehaviour
         originalSaved = true;
     }
 
-    /// Восстановить исходные привязки (если вдруг понадобится).
     public void RestoreOriginalContainerLayout()
     {
         if (!originalSaved || container == null) return;
@@ -239,15 +255,14 @@ public class IOSWebViewController : MonoBehaviour
         container.offsetMax = origOffsetMax;
     }
 
-    /// Растянуть контейнер по **safe-area**.
     public void ExpandContainerToSafeArea()
     {
         if (container == null) return;
 
         var safe = Screen.safeArea;
         Vector2 amin = safe.position, amax = safe.position + safe.size;
-        amin.x /= Screen.width;  amin.y /= Screen.height;
-        amax.x /= Screen.width;  amax.y /= Screen.height;
+        amin.x /= Screen.width; amin.y /= Screen.height;
+        amax.x /= Screen.width; amax.y /= Screen.height;
 
         container.anchorMin = amin;
         container.anchorMax = amax;
@@ -255,13 +270,12 @@ public class IOSWebViewController : MonoBehaviour
         container.offsetMax = Vector2.zero;
     }
 
-    /// Растянуть контейнер на **весь экран**, включая зоны вырезов/динамических островов.
     public void ExpandContainerToFullScreen()
     {
         if (container == null) return;
 
-        container.anchorMin = Vector2.zero;      // (0,0)
-        container.anchorMax = Vector2.one;       // (1,1)
+        container.anchorMin = Vector2.zero;
+        container.anchorMax = Vector2.one;
         container.offsetMin = Vector2.zero;
         container.offsetMax = Vector2.zero;
     }
