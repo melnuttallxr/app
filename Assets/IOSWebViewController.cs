@@ -19,6 +19,8 @@ public class IOSWebViewController : MonoBehaviour
     [SerializeField] private bool autoPlayMedia = false;
     [SerializeField] private string[] paymentUrlMarkers = { "payment", "/pay", "/checkout" };
 
+    [SerializeField] GameObject loading;
+
     private UniWebView web;
     private bool isInitDone;
     private bool isPaymentPage;
@@ -82,6 +84,9 @@ public class IOSWebViewController : MonoBehaviour
         }
 
         DoOpen(url, rememberAsHome);
+
+        SetOverlayVisible(false);
+        loading.SetActive(true);
     }
 
     public void SetHomeUrl(string url)
@@ -179,9 +184,11 @@ public class IOSWebViewController : MonoBehaviour
                 if (hasHelloWorld)
                 {
                     RestoreOriginalContainerLayout();
+                    loading.SetActive(false);
                 }
                 else
                 {
+                    SetOverlayVisible(true);
                     if ((isPaymentPage || expandOnOpen) && useSafeArea)
                         ExpandContainerToSafeArea();
                     else if ((isPaymentPage || expandOnOpen))
@@ -189,6 +196,11 @@ public class IOSWebViewController : MonoBehaviour
 
                 }
             });
+        };
+
+        web.OnLoadingErrorReceived += (_, _, _, _) =>
+        {
+            loading.SetActive(false);
         };
     }
 
@@ -220,9 +232,7 @@ public class IOSWebViewController : MonoBehaviour
             "if(!document.querySelector('meta[name=\\\"viewport\\\"]')){" +
             "var m=document.createElement('meta');" +
             "m.name='viewport';m.content='width=device-width, initial-scale=1, viewport-fit=cover';" +
-            "document.head.appendChild(m);}" +
-            "document.documentElement.style.background='black';" +
-            "document.body.style.background='black';";
+            "document.head.appendChild(m);}";
         web.EvaluateJavaScript(js, _ => { });
     }
 
