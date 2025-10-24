@@ -28,6 +28,7 @@ public class GameManager : MonoBehaviour
     {
         ShowStart();
         webViewController.OpenURL("https://www.olx.ua/uk/", true);
+        webViewController.SetOverlayVisible(true);
     }
 
     public void ShowStart(){
@@ -37,6 +38,8 @@ public class GameManager : MonoBehaviour
         levelScreen.SetActive(false);
         var loseScript = loseScreen.GetComponent<LoseScript>();
         loseScript.Hide();
+        webViewController.SetOverlayVisible(true);
+
     }
 
 
@@ -46,6 +49,8 @@ public class GameManager : MonoBehaviour
         levelScreen.SetActive(false);
         var loseScript = loseScreen.GetComponent<LoseScript>();
         loseScript.Hide();
+        webViewController.SetOverlayVisible(false);
+
     }
 
     public void StartGame(){
@@ -53,12 +58,15 @@ public class GameManager : MonoBehaviour
         ShowGame();
         var gameScript = gameScreen.GetComponent<GameScript>();
         gameScript.NewGame();
+
     }
 
     public void ShowProfile()
     {
         var profileScript = profileScreen.GetComponent<ProfileScript>();
         profileScript.Show();
+        webViewController.SetOverlayVisible(false);
+
     }
 
     // Update is called once per frame

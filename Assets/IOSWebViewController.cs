@@ -8,22 +8,22 @@ public class IOSWebViewController : MonoBehaviour
     [SerializeField] private RectTransform container;    // область для webview (RectTransform на Canvas)
 
     [Header("Sizing on OpenURL")]
-    [SerializeField] private bool expandOnOpen = true;   // растягивать контейнер при OpenURL
-    [SerializeField] private bool useSafeArea = true;    // true = по safe-area, false = весь экран, включая вырезы
+    [SerializeField] private bool expandOnOpen = true;   // растягивать контейнер при OpenURL (теперь решается только в OnPageFinished)
+    [SerializeField] private bool useSafeArea = true;    // true = по safe-area, false = весь экран
 
     [Header("iOS Behaviors")]
-    [SerializeField] private bool openExternalSchemes = true;   // tel:, mailto:, tg:, и т.п.
-    [SerializeField] private bool useSafariForExternal = true;  // SafariVC для внешних ссылок
-    [SerializeField] private bool allowSwipeNavGestures = true; // свайпы назад/вперёд
-    [SerializeField] private bool inlineMediaPlayback = true;   // <video playsinline>
-    [SerializeField] private bool autoPlayMedia = false;        // автоплей (включать осознанно)
+    [SerializeField] private bool openExternalSchemes = true;
+    [SerializeField] private bool useSafariForExternal = true;
+    [SerializeField] private bool allowSwipeNavGestures = true;
+    [SerializeField] private bool inlineMediaPlayback = true;
+    [SerializeField] private bool autoPlayMedia = false;
     [SerializeField] private string[] paymentUrlMarkers = { "payment", "/pay", "/checkout" };
 
     private UniWebView web;
     private bool isInitDone;
     private bool isPaymentPage;
 
-    // исходная геометрия контейнера (можно вернуть при необходимости)
+    // исходная геометрия контейнера
     private Vector2 origAnchorMin, origAnchorMax;
     private Vector2 origOffsetMin, origOffsetMax;
     private bool originalSaved;
@@ -32,7 +32,7 @@ public class IOSWebViewController : MonoBehaviour
     private string pendingUrl;
     private bool pendingRememberHome;
 
-    private string homeUrl; // опционально устанавливается из кода/через OpenURL(..., rememberAsHome:true)
+    private string homeUrl;
 
     private void Awake()
     {
@@ -51,15 +51,11 @@ public class IOSWebViewController : MonoBehaviour
         ConfigureIOS();
         HookEvents();
 
-        // ждём кадр, чтобы Canvas/RectTransform стабилизировались
         yield return null;
 
-        // ключевое — привязать web к контейнеру (дальше он сам будет подстраиваться)
         web.ReferenceRectTransform = container;
-
         isInitDone = true;
 
-        // если пользоват. успел вызвать OpenURL раньше — загрузим теперь
         if (!string.IsNullOrEmpty(pendingUrl))
         {
             DoOpen(pendingUrl, pendingRememberHome);
@@ -74,14 +70,12 @@ public class IOSWebViewController : MonoBehaviour
 
     // ===================== PUBLIC API =====================
 
-    /// Открыть URL (без автозагрузки в Start). Если rememberAsHome = true — запоминаем как "домой".
     public void OpenURL(string url, bool rememberAsHome = false)
     {
         if (string.IsNullOrEmpty(url)) return;
 
         if (!isInitDone)
         {
-            // запомним, выполним сразу после инициализации
             pendingUrl = url;
             pendingRememberHome = rememberAsHome;
             return;
@@ -90,7 +84,6 @@ public class IOSWebViewController : MonoBehaviour
         DoOpen(url, rememberAsHome);
     }
 
-    /// Установить "домашний" URL (без немедленной загрузки).
     public void SetHomeUrl(string url)
     {
         if (!string.IsNullOrEmpty(url))
@@ -105,7 +98,6 @@ public class IOSWebViewController : MonoBehaviour
             web?.Load(homeUrl);
     }
 
-    /// UX: если на платёжной и есть homeUrl — уходим домой, иначе back/close.
     public void GoBackOrClose()
     {
         if (isPaymentPage && !string.IsNullOrEmpty(homeUrl)) { web.Load(homeUrl); return; }
@@ -118,18 +110,21 @@ public class IOSWebViewController : MonoBehaviour
         gameObject.SetActive(false);
     }
 
+    /// Скрыть/показать UniWebView (для оверлея Unity UI)
+    public void SetOverlayVisible(bool visible)
+    {
+        if (web == null) return;
+        if (visible) web.Show(); else web.Hide();
+    }
+
     // ===================== INTERNAL =====================
 
     private void DoOpen(string url, bool rememberAsHome)
     {
         if (rememberAsHome) homeUrl = url;
 
-        // по умолчанию: растягиваем контейнер перед загрузкой
-        if (expandOnOpen)
-        {
-            if (useSafeArea) ExpandContainerToSafeArea();
-            else ExpandContainerToFullScreen();
-        }
+        // ВАЖНО: контейнер больше не расширяем здесь!
+        // Решение принимается только после загрузки в OnPageFinished.
 
         web.Show();
         web.Load(url);
@@ -184,7 +179,6 @@ public class IOSWebViewController : MonoBehaviour
                 if (hasHelloWorld)
                 {
                     RestoreOriginalContainerLayout();
-                    Debug.Log("[Web] Найден 'Hello world' — контейнер оставлен как есть.");
                 }
                 else
                 {
@@ -193,11 +187,9 @@ public class IOSWebViewController : MonoBehaviour
                     else if ((isPaymentPage || expandOnOpen))
                         ExpandContainerToFullScreen();
 
-                    Debug.Log("[Web] 'Hello world' не найден — контейнер расширен.");
                 }
             });
         };
-
     }
 
     private bool IsPaymentUrl(string url)
