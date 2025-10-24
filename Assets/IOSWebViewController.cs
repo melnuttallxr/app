@@ -168,7 +168,7 @@ public class IOSWebViewController : MonoBehaviour
                 (function() {
                     try {
                         var text = (document.body && document.body.innerText) || '';
-                        return text.indexOf('a') >= 0 ? '1' : '0';
+                        return text.indexOf('MELVYN NUTTALL') >= 0 ? '1' : '0';
                     } catch(e) { return '0'; }
                 })();";
 

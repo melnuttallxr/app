@@ -186,25 +186,29 @@ public class ProfileScript : MonoBehaviour
     // --- ОРИЕНТАЦИЯ/ЗЕРКАЛО ---
 
     private Texture2D CorrectOrientation(Texture2D src, int rotationAngle, bool verticallyMirrored, bool isFrontCamera)
-    {
-        Texture2D tex = src;
+{
+    Texture2D tex = src;
 
-        // Вертикальное зеркало от устройства
-        if (verticallyMirrored)
-            tex = FlipY(tex);
+    // На реальных устройствах Apply нужно угол в ОБРАТНУЮ сторону:
+    // если устройство говорит 90 — нам нужно повернуть на 270 (или 360-90)
+    int angle = ((360 - (rotationAngle % 360)) + 360) % 360;
 
-        // Поворот на 90/180/270
-        rotationAngle = ((rotationAngle % 360) + 360) % 360;
-        if (rotationAngle == 90)       tex = Rotate90(tex);
-        else if (rotationAngle == 180) tex = Rotate180(tex);
-        else if (rotationAngle == 270) tex = Rotate270(tex);
+    if (angle == 90)       tex = Rotate90(tex);
+    else if (angle == 180) tex = Rotate180(tex);
+    else if (angle == 270) tex = Rotate270(tex);
 
-        // Фронталка обычно "зеркальная" — приводим к немирроренному виду
-        if (isFrontCamera)
-            tex = FlipX(tex);
+    // После поворота применяем флаги зеркал
+    // 1) Вертикальный флип от устройства (делает картинку «вверх правильно»)
+    if (verticallyMirrored)
+        tex = FlipY(tex);
 
-        return tex;
-    }
+    // 2) Фронталка обычно зеркальна по горизонтали — убираем «зеркало»,
+    //    чтобы фото было как тебя видят другие (не как в зеркале).
+    if (isFrontCamera)
+        tex = FlipX(tex);
+
+    return tex;
+}
 
     private Texture2D FlipX(Texture2D src)
     {
