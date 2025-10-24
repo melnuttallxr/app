@@ -6463,7 +6463,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   nameInput: {fileID: 1900307808}
   profileImage: {fileID: 1954685030}
-  bestText: {fileID: 821035651}
+  bestText: {fileID: 1649209161}
   rTransform: {fileID: 363983409}
   defaultProfileImage: {fileID: 4009926403774053751, guid: 07fd4daa3f0c8433fa88ec141677b402, type: 3}
 --- !u!224 &1812212074

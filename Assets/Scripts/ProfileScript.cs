@@ -1,3 +1,4 @@
+using System.Collections;
 using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,29 +9,26 @@ public class ProfileScript : MonoBehaviour
 {
     [Header("UI")]
     [SerializeField] private TMP_InputField nameInput;
-    [SerializeField] private Image profileImage;              // UI Image для аватара
+    [SerializeField] private Image profileImage;           // сюда ставим аватар
     [SerializeField] private TextMeshProUGUI bestText;
     [SerializeField] private RectTransform rTransform;
 
-    [Header("Defaults")]
-    [SerializeField] private Sprite defaultProfileImage;      // дефолтная аватарка (можно круглую PNG)
+    [Header("Images")]
+    [SerializeField] private Sprite defaultProfileImage;   // дефолтная аватарка (можно круглую PNG)
 
     private const string ProfileFileName = "profile.png";
     private string ProfilePath => Path.Combine(Application.persistentDataPath, ProfileFileName);
 
-    // === ПУБЛИЧНО ===
+    // ==== Public ====
 
     public void Show()
     {
-        // данные
         bestText.text = SaveManger.getBest().ToString();
         nameInput.text = SaveManger.getName();
         nameInput.ForceLabelUpdate();
 
-        // аватар
         LoadProfileImageIfAny();
 
-        // анимация
         gameObject.SetActive(true);
         rTransform.localScale = Vector3.zero;
         rTransform.DOScale(Vector3.one, 0.5f).SetEase(Ease.OutBack);
@@ -44,57 +42,13 @@ public class ProfileScript : MonoBehaviour
 
     public void okPressed() => Hide();
 
-    /// Кнопка «Сменить фото» — откроет системное окно камеры (iOS/Android).
-    public void OpenCamera()
+    /// Кнопка «Камера»: сделать фото, сохранить и установить.
+    public void openCameraAndSetPrifileImage()
     {
-#if UNITY_IOS || UNITY_ANDROID
-        if (!NativeCamera.DeviceHasCamera())
-        {
-            Debug.LogWarning("Device has no camera");
-            return;
-        }
-        if (NativeCamera.IsCameraBusy())
-            return;
-
-        const int targetMax = 1024; // max размер загружаемой текстуры (iOS скейлит; на Android без эффекта) — см. README
-        NativeCamera.TakePicture((path) =>
-        {
-            if (string.IsNullOrEmpty(path))
-                return; // пользователь отменил
-
-            // грузим изображение в Texture2D
-            Texture2D tex = NativeCamera.LoadImageAtPath(path, targetMax);
-            if (tex == null)
-            {
-                Debug.LogWarning("Failed to load photo at: " + path);
-                return;
-            }
-
-            // квадрат + вырез круга (прозрачные углы)
-            var square = CropCenterSquare(tex);
-            var circular = MakeCircular(square);
-
-            // сохраняем в persistentDataPath (PNG)
-            SaveTexturePng(circular, ProfilePath);
-
-            // ставим в UI
-            SetAvatarFromTexture(circular);
-
-        }, targetMax, true, NativeCamera.PreferredCamera.Front); // просим фронталку (не на всех девайсах гарантировано)
-#else
-        Debug.LogWarning("NativeCamera поддерживается только на iOS/Android. В Editor фото не снимается.");
-#endif
+        StartCoroutine(CaptureFromCameraOnce());
     }
 
-    /// Опционально: очистить фото и вернуть дефолтную картинку
-    public void ResetPhoto()
-    {
-        try { if (File.Exists(ProfilePath)) File.Delete(ProfilePath); } catch { }
-        profileImage.sprite = defaultProfileImage;
-        profileImage.preserveAspect = true;
-    }
-
-    // === ВНУТРЕННЕЕ ===
+    // ==== Internals ====
 
     private void LoadProfileImageIfAny()
     {
@@ -102,8 +56,9 @@ public class ProfileScript : MonoBehaviour
         {
             try
             {
+                bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false, linear);
                 var png = File.ReadAllBytes(ProfilePath);
-                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                 if (tex.LoadImage(png))
                 {
                     SetAvatarFromTexture(tex);
@@ -117,35 +72,239 @@ public class ProfileScript : MonoBehaviour
         profileImage.preserveAspect = true;
     }
 
+    private IEnumerator CaptureFromCameraOnce()
+{
+    // Разрешение
+    if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
+    {
+        yield return Application.RequestUserAuthorization(UserAuthorization.WebCam);
+        if (!Application.HasUserAuthorization(UserAuthorization.WebCam))
+        {
+            Debug.LogWarning("Camera permission denied");
+            yield break;
+        }
+    }
+
+    // Выбрать фронталку, если есть
+    var devices = WebCamTexture.devices;
+    if (devices == null || devices.Length == 0)
+    {
+        Debug.LogWarning("No camera devices");
+        yield break;
+    }
+    int index = 0;
+    for (int i = 0; i < devices.Length; i++)
+        if (devices[i].isFrontFacing) { index = i; break; }
+
+    var camTex = new WebCamTexture(devices[index].name, 1280, 720, 30);
+    camTex.Play();
+
+    // Прогрев: дождаться валидного размера
+    const float timeout = 8f;
+    float t = 0f;
+    while ((camTex.width <= 16 || camTex.height <= 16) && t < timeout)
+    {
+        t += Time.deltaTime;
+        yield return null;
+    }
+    if (camTex.width <= 16 || camTex.height <= 16)
+    {
+        Debug.LogWarning("Camera warm-up failed");
+        camTex.Stop();
+        yield break;
+    }
+
+    // Дождаться пары реальных кадров (борьба с чёрным кадром)
+    int goodFrames = 0; t = 0f;
+    while (goodFrames < 2 && t < 2f)
+    {
+        if (camTex.didUpdateThisFrame) goodFrames++;
+        t += Time.deltaTime;
+        yield return null;
+    }
+
+    // Создаём RT по фактическим размерам на этот кадр
+    int w = Mathf.Max(1, camTex.width);
+    int h = Mathf.Max(1, camTex.height);
+    var rt = new RenderTexture(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+    if (!rt.IsCreated()) rt.Create();
+
+    // Блит и ждём конец кадра, чтобы гарантировать валидные пиксели на Metal
+    Graphics.Blit(camTex, rt);
+    yield return new WaitForEndOfFrame();
+
+    // Активируем RT и читаем строго его размеры (не camTex!)
+    var prev = RenderTexture.active;
+    RenderTexture.active = rt;
+
+    int rw = rt.width;
+    int rh = rt.height;
+    var rect = new Rect(0, 0, rw, rh);
+
+    bool linear = QualitySettings.activeColorSpace == ColorSpace.Linear;
+    var snap = new Texture2D(rw, rh, TextureFormat.RGBA32, false, linear);
+
+    // Safety clamp на всякий случай (редкие дёрганья размера)
+    rect.width  = Mathf.Clamp(rect.width,  0, rw);
+    rect.height = Mathf.Clamp(rect.height, 0, rh);
+
+    // Чтение пикселей
+    snap.ReadPixels(rect, 0, 0, false);
+    snap.Apply();
+
+    // Чистим
+    RenderTexture.active = prev;
+    rt.Release();
+    camTex.Stop();
+
+    bool isFront = devices[index].isFrontFacing;
+
+    // Ориентация/зеркало
+    var oriented = CorrectOrientation(snap, camTex.videoRotationAngle, camTex.videoVerticallyMirrored, isFront);
+
+    // Квадрат + круг
+    var square = CropCenterSquare(oriented);
+    var circular = MakeCircular(square);
+
+    SaveTexturePng(circular, ProfilePath);
+    SetAvatarFromTexture(circular);
+}
+
     private void SetAvatarFromTexture(Texture2D tex)
     {
-        var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
-                                   new Vector2(0.5f, 0.5f), 100f);
+        var sprite = Sprite.Create(
+            tex,
+            new Rect(0, 0, tex.width, tex.height),
+            new Vector2(0.5f, 0.5f),
+            100f
+        );
         profileImage.sprite = sprite;
         profileImage.type = Image.Type.Simple;
         profileImage.preserveAspect = true;
     }
 
-    private static Texture2D CropCenterSquare(Texture2D src)
+    // --- ОРИЕНТАЦИЯ/ЗЕРКАЛО ---
+
+    private Texture2D CorrectOrientation(Texture2D src, int rotationAngle, bool verticallyMirrored, bool isFrontCamera)
+    {
+        Texture2D tex = src;
+
+        // Вертикальное зеркало от устройства
+        if (verticallyMirrored)
+            tex = FlipY(tex);
+
+        // Поворот на 90/180/270
+        rotationAngle = ((rotationAngle % 360) + 360) % 360;
+        if (rotationAngle == 90)       tex = Rotate90(tex);
+        else if (rotationAngle == 180) tex = Rotate180(tex);
+        else if (rotationAngle == 270) tex = Rotate270(tex);
+
+        // Фронталка обычно "зеркальная" — приводим к немирроренному виду
+        if (isFrontCamera)
+            tex = FlipX(tex);
+
+        return tex;
+    }
+
+    private Texture2D FlipX(Texture2D src)
+    {
+        int w = src.width, h = src.height;
+        var dst = new Texture2D(w, h, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
+        var srcPix = src.GetPixels32();
+        var dstPix = new Color32[srcPix.Length];
+
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                dstPix[y * w + (w - 1 - x)] = srcPix[y * w + x];
+
+        dst.SetPixels32(dstPix); dst.Apply();
+        return dst;
+    }
+
+    private Texture2D FlipY(Texture2D src)
+    {
+        int w = src.width, h = src.height;
+        var dst = new Texture2D(w, h, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
+        var srcPix = src.GetPixels32();
+        var dstPix = new Color32[srcPix.Length];
+
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                dstPix[(h - 1 - y) * w + x] = srcPix[y * w + x];
+
+        dst.SetPixels32(dstPix); dst.Apply();
+        return dst;
+    }
+
+    private Texture2D Rotate90(Texture2D src)
+    {
+        int w = src.width, h = src.height;
+        var dst = new Texture2D(h, w, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
+        var srcPix = src.GetPixels32();
+        var dstPix = new Color32[srcPix.Length];
+
+        // (x, y) -> (y, w-1-x)
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                dstPix[x * h + (h - 1 - y)] = srcPix[y * w + x];
+
+        dst.SetPixels32(dstPix); dst.Apply();
+        return dst;
+    }
+
+    private Texture2D Rotate180(Texture2D src)
+    {
+        int w = src.width, h = src.height;
+        var dst = new Texture2D(w, h, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
+        var srcPix = src.GetPixels32();
+        var dstPix = new Color32[srcPix.Length];
+
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                dstPix[(h - 1 - y) * w + (w - 1 - x)] = srcPix[y * w + x];
+
+        dst.SetPixels32(dstPix); dst.Apply();
+        return dst;
+    }
+
+    private Texture2D Rotate270(Texture2D src)
+    {
+        int w = src.width, h = src.height;
+        var dst = new Texture2D(h, w, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
+        var srcPix = src.GetPixels32();
+        var dstPix = new Color32[srcPix.Length];
+
+        // (x, y) -> (w-1-x, y)  (эквивалент -90)
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                dstPix[(w - 1 - x) * h + y] = srcPix[y * w + x];
+
+        dst.SetPixels32(dstPix); dst.Apply();
+        return dst;
+    }
+
+    // --- КРОП/КРУГ ---
+
+    private Texture2D CropCenterSquare(Texture2D src)
     {
         int size = Mathf.Min(src.width, src.height);
         int x = (src.width - size) / 2;
         int y = (src.height - size) / 2;
 
         var pixels = src.GetPixels(x, y, size, size);
-        var dst = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        var dst = new Texture2D(size, size, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
         dst.SetPixels(pixels);
         dst.Apply();
         return dst;
     }
 
-    private static Texture2D MakeCircular(Texture2D square)
+    private Texture2D MakeCircular(Texture2D square)
     {
         int size = square.width; // == height
         var pixels = square.GetPixels();
         float r = size * 0.5f;
         float r2 = r * r;
-        var c = new Vector2(r - 0.5f, r - 0.5f);
+        Vector2 c = new Vector2(r - 0.5f, r - 0.5f);
 
         for (int y = 0; y < size; y++)
         {
@@ -157,19 +316,19 @@ public class ProfileScript : MonoBehaviour
                 if (dx * dx + dy * dy > r2)
                 {
                     var col = pixels[i];
-                    col.a = 0f;      // обнуляем альфу вне круга
+                    col.a = 0f;
                     pixels[i] = col;
                 }
             }
         }
 
-        var dst = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        var dst = new Texture2D(size, size, TextureFormat.RGBA32, false, QualitySettings.activeColorSpace == ColorSpace.Linear);
         dst.SetPixels(pixels);
         dst.Apply();
         return dst;
     }
 
-    private static void SaveTexturePng(Texture2D tex, string path)
+    private void SaveTexturePng(Texture2D tex, string path)
     {
         try
         {
@@ -180,7 +339,7 @@ public class ProfileScript : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogError("Failed to save profile image: " + e.Message);
+            Debug.LogError($"Failed to save profile image: {e.Message}");
         }
     }
 }
