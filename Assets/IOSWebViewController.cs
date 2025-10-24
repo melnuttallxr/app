@@ -86,6 +86,7 @@ public class IOSWebViewController : MonoBehaviour
         DoOpen(url, rememberAsHome);
 
         SetOverlayVisible(false);
+        Debug.Log("loading show");
         loading.SetActive(true);
     }
 
@@ -184,6 +185,7 @@ public class IOSWebViewController : MonoBehaviour
                 if (hasHelloWorld)
                 {
                     RestoreOriginalContainerLayout();
+                    Debug.Log("Loading Hide");
                     loading.SetActive(false);
                 }
                 else
@@ -200,6 +202,7 @@ public class IOSWebViewController : MonoBehaviour
 
         web.OnLoadingErrorReceived += (_, _, _, _) =>
         {
+            Debug.Log("Loading hide");
             loading.SetActive(false);
         };
     }
