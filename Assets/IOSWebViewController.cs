@@ -153,7 +153,7 @@ public class IOSWebViewController : MonoBehaviour
         web.SetShowToolbar(false);
         web.SetBouncesEnabled(true);
         web.BackgroundColor = Color.black;
-        web.SetSupportMultipleWindows(true, true);
+        web.SetSupportMultipleWindows(false, false);
     }
 
     private void HookEvents()
