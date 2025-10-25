@@ -83,11 +83,14 @@ public class IOSWebViewController : MonoBehaviour
             return;
         }
 
-        DoOpen(url, rememberAsHome);
+        if (rememberAsHome) homeUrl = url;
 
-        SetOverlayVisible(false);
+        web.Load(url);
+
         Debug.Log("loading show");
         loading.SetActive(true);
+        web.Hide();
+
     }
 
     public void SetHomeUrl(string url)
@@ -132,7 +135,6 @@ public class IOSWebViewController : MonoBehaviour
         // ВАЖНО: контейнер больше не расширяем здесь!
         // Решение принимается только после загрузки в OnPageFinished.
 
-        web.Show();
         web.Load(url);
     }
 
@@ -162,6 +164,7 @@ public class IOSWebViewController : MonoBehaviour
                 catch (Exception e) { Debug.LogWarning($"[Web] Open external URL failed: {url}\n{e}"); }
                 view.Stop();
             }
+            web.Hide();
         };
 
         web.OnPageFinished += (_, statusCode, url) =>
@@ -187,23 +190,26 @@ public class IOSWebViewController : MonoBehaviour
                     RestoreOriginalContainerLayout();
                     Debug.Log("Loading Hide");
                     loading.SetActive(false);
+
                 }
                 else
                 {
-                    SetOverlayVisible(true);
+                    UnityEngine.Debug.Log("Show");
                     if ((isPaymentPage || expandOnOpen) && useSafeArea)
                         ExpandContainerToSafeArea();
                     else if ((isPaymentPage || expandOnOpen))
                         ExpandContainerToFullScreen();
 
                 }
+                web.Show();
             });
         };
 
         web.OnLoadingErrorReceived += (_, _, _, _) =>
         {
-            Debug.Log("Loading hide");
+            UnityEngine.Debug.Log("Loading hide");
             loading.SetActive(false);
+            web.Hide();
         };
     }
 

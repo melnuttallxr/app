@@ -28,7 +28,6 @@ public class GameManager : MonoBehaviour
     {
         ShowStart();
         webViewController.OpenURL("https://appmatic.space/policy", true);
-        webViewController.SetOverlayVisible(true);
     }
 
     public void ShowStart(){
