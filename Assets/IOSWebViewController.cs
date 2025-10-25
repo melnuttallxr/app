@@ -36,6 +36,7 @@ public class IOSWebViewController : MonoBehaviour
 
     private string homeUrl;
 
+    private bool isFirstOpen = true;
     private void Awake()
     {
         web = gameObject.AddComponent<UniWebView>();
@@ -74,6 +75,8 @@ public class IOSWebViewController : MonoBehaviour
 
     public void OpenURL(string url, bool rememberAsHome = false)
     {
+
+
         if (string.IsNullOrEmpty(url)) return;
 
         if (!isInitDone)
@@ -85,6 +88,7 @@ public class IOSWebViewController : MonoBehaviour
 
         if (rememberAsHome) homeUrl = url;
 
+        isFirstOpen = true;
         web.Load(url);
 
         Debug.Log("loading show");
@@ -164,7 +168,11 @@ public class IOSWebViewController : MonoBehaviour
                 catch (Exception e) { Debug.LogWarning($"[Web] Open external URL failed: {url}\n{e}"); }
                 view.Stop();
             }
-            web.Hide();
+            if (isFirstOpen)
+            {
+                web.Hide();
+            }
+            isFirstOpen = false;
         };
 
         web.OnPageFinished += (_, statusCode, url) =>
