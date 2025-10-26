@@ -207,9 +207,10 @@ public class IOSWebViewController : MonoBehaviour
                         ExpandContainerToSafeArea();
                     else if ((isPaymentPage || expandOnOpen))
                         ExpandContainerToFullScreen();
+                        FindObjectOfType<OrientationManager>().AllowPortraitAndLandscape();
+
 
                 }
-                FindObjectOfType<OrientationManager>().AllowPortraitAndLandscape();
                 web.Show();
             });
         };
