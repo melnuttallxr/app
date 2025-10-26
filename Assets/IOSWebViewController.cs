@@ -209,6 +209,7 @@ public class IOSWebViewController : MonoBehaviour
                         ExpandContainerToFullScreen();
 
                 }
+                FindObjectOfType<OrientationManager>().AllowPortraitAndLandscape();
                 web.Show();
             });
         };

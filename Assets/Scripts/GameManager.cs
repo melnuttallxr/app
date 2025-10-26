@@ -3,6 +3,7 @@ using UnityEngine;
 public class GameManager : MonoBehaviour
 {
 
+
     [SerializeField]
     IOSWebViewController webViewController;
 
@@ -24,6 +25,11 @@ public class GameManager : MonoBehaviour
     [SerializeField]
     AudioManager audioManager;
     // Start is called once before the first execution of Update after the MonoBehaviour is created
+    void Awake()
+    {
+        FindObjectOfType<OrientationManager>().LockPortraitAtStart();
+    }
+    
     void Start()
     {
         ShowStart();
